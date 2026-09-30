@@ -1,4 +1,55 @@
 const http = require("http");
+
+
+// Intercept fetch to sanitize InferX upstream requests
+if (typeof globalThis.fetch === "function") {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const urlStr = String(url || "");
+    if (options && options.body && typeof options.body === "string" && urlStr.includes("inferx.net")) {
+      try {
+        const json = JSON.parse(options.body);
+        let modified = false;
+        if ((!json.tools || !Array.isArray(json.tools) || json.tools.length === 0) && json.tool_choice) {
+          delete json.tool_choice;
+          modified = true;
+        }
+        if (typeof json.max_tokens === "number" && json.max_tokens > 26200) {
+          json.max_tokens = 26200;
+          modified = true;
+        }
+        // Merge all system and developer messages into a single system message
+        // (InferX vLLM chat template strictly rejects multiple system messages)
+        if (Array.isArray(json.messages)) {
+          const sysContents = [];
+          const nonSysMessages = [];
+          for (const msg of json.messages) {
+            if (!msg) continue;
+            const role = msg.role === "developer" ? "system" : msg.role;
+            if (role === "system") {
+              const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+              if (text && text.trim()) sysContents.push(text.trim());
+            } else {
+              nonSysMessages.push(msg);
+            }
+          }
+          if (sysContents.length > 0) {
+            json.messages = [
+              { role: "system", content: sysContents.join("\n\n") },
+              ...nonSysMessages
+            ];
+            modified = true;
+          }
+        }
+        if (modified) {
+          options = { ...options, body: JSON.stringify(json) };
+        }
+      } catch {}
+    }
+    return origFetch(url, options);
+  };
+}
+
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
