@@ -98,57 +98,85 @@ export function getToolCallIds(msg) {
   return ids;
 }
 
-// Check if user message has tool_result for given ids (OpenAI format: role=tool, Claude format: tool_result in content)
-export function hasToolResults(msg, toolCallIds) {
-  if (!msg || !toolCallIds.length) return false;
+// Synthetic result content for a tool_call left without a response (history truncation,
+// cancelled/timeout parallel call). Upstream CodeBuddy/Tencent accepts a role:tool result
+// with an explicit error payload, so the model sees a real (failed) result instead of a
+// structurally invalid graph. See codebuddy-intl/cn 11133 / 11148.
+const OMITTED_TOOL_RESULT = '{"error":"Tool execution omitted or cancelled"}';
 
-  // OpenAI format: role = "tool" with tool_call_id
-  if (msg.role === "tool" && msg.tool_call_id) {
-    return toolCallIds.includes(msg.tool_call_id);
-  }
-
-  // Claude format: tool_result blocks in user message content
-  if (msg.role === "user" && Array.isArray(msg.content)) {
-    for (const block of msg.content) {
-      if (block.type === "tool_result" && toolCallIds.includes(block.tool_use_id)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-// Fix missing tool responses - insert empty tool_result if assistant has tool_use but next message has no tool_result
+// Fix missing tool responses: repair the tool-call graph so every id a provider sees is
+// answered. The legacy immediate-next check missed two cases that upstream rejects with a
+// generic 400 (CodeBuddy `11133 model_param_invalid`, cbcn `11148 tool calls and tool
+// results do not match`):
+//   - an assistant tool_calls block as the LAST message (no next msg -> repair skipped)
+//   - parallel tool_calls answered only partially (any match counted as complete)
+// Also drops orphan role:tool messages whose id was never requested.
+//
+// Shape-aware: OpenAI bodies (assistant.tool_calls + role:tool) get synthetic role:tool
+// messages; Claude bodies (assistant content tool_use + user content tool_result) get
+// synthetic tool_result blocks, so a Claude source body is not corrupted before it is
+// translated. Bodies without a tool graph are returned untouched.
 export function fixMissingToolResponses(body) {
   if (!body.messages || !Array.isArray(body.messages)) return body;
 
   const newMessages = [];
+  let pending = new Map();
 
-  for (let i = 0; i < body.messages.length; i++) {
-    const msg = body.messages[i];
-    const nextMsg = body.messages[i + 1];
-
-    newMessages.push(msg);
-
-    // Check if this is assistant with tool_calls/tool_use
-    const toolCallIds = getToolCallIds(msg);
-    if (toolCallIds.length === 0) continue;
-
-    // Check if next message has tool_result
-    if (nextMsg && !hasToolResults(nextMsg, toolCallIds)) {
-      // Insert tool responses for each tool_call
-      for (const id of toolCallIds) {
-        // OpenAI format: role = "tool"
-        newMessages.push({
-          role: "tool",
-          tool_call_id: id,
-          content: ""
-        });
+  const flush = () => {
+    for (const [id, info] of pending) {
+      if (info.claude) {
+        const carrier = newMessages[newMessages.length - 1];
+        const block = { type: "tool_result", tool_use_id: id, content: OMITTED_TOOL_RESULT };
+        if (carrier && carrier.role === "user" && Array.isArray(carrier.content)) {
+          carrier.content.push(block);
+        } else {
+          newMessages.push({ role: "user", content: [block] });
+        }
+      } else {
+        newMessages.push({ role: "tool", tool_call_id: id, content: OMITTED_TOOL_RESULT });
       }
+    }
+    pending = new Map();
+  };
+
+  for (const msg of body.messages) {
+    if (!msg || typeof msg !== "object") continue;
+
+    const idSet = new Set(getToolCallIds(msg));
+
+    if (msg.role === "assistant" && idSet.size > 0) {
+      flush();
+      newMessages.push(msg);
+      const claude = Array.isArray(msg.content) && msg.content.some((b) => b?.type === "tool_use");
+      for (const id of idSet) pending.set(id, { claude });
+    } else if (msg.role === "assistant") {
+      flush();
+      newMessages.push(msg);
+    } else if (msg.role === "tool") {
+      if (msg.tool_call_id && pending.has(msg.tool_call_id)) {
+        pending.delete(msg.tool_call_id);
+        newMessages.push(msg);
+      }
+    } else if (msg.role === "user" && Array.isArray(msg.content) && msg.content.some((b) => b?.type === "tool_result")) {
+      // Claude results ride in user messages. Keep a user message only if it still has a
+      // matched tool_result or non-tool_result content; drop it when it becomes empty so an
+      // orphan result cannot leave an empty user message before a user turn.
+      const keptBlocks = msg.content.filter((b) => {
+        if (b?.type !== "tool_result") return true;
+        if (b.tool_use_id && pending.has(b.tool_use_id)) {
+          pending.delete(b.tool_use_id);
+          return true;
+        }
+        return false;
+      });
+      if (keptBlocks.length > 0) newMessages.push({ ...msg, content: keptBlocks });
+    } else {
+      flush();
+      newMessages.push(msg);
     }
   }
 
+  flush();
   body.messages = newMessages;
   return body;
 }

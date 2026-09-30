@@ -96,4 +96,30 @@ describe("stripUnsupportedParams", () => {
 
     expect(body.messages[0].reasoning_content).toBe("thinking...");
   });
+
+  it("coerces CodeBuddy object tool_choice to the nearest string form", () => {
+    for (const provider of ["codebuddy-intl", "codebuddy-cn"]) {
+      const forced = { tool_choice: { type: "function", function: { name: "probe_tool" } } };
+      stripUnsupportedParams(provider, "deepseek-v4.1-flash", forced);
+      expect(forced.tool_choice).toBe("required");
+
+      const auto = { tool_choice: { type: "auto" } };
+      stripUnsupportedParams(provider, "deepseek-v4.1-flash", auto);
+      expect(auto.tool_choice).toBe("auto");
+
+      const none = { tool_choice: { type: "none" } };
+      stripUnsupportedParams(provider, "deepseek-v4.1-flash", none);
+      expect(none.tool_choice).toBe("none");
+    }
+  });
+
+  it("keeps CodeBuddy string tool_choice and leaves other providers untouched", () => {
+    const asString = { tool_choice: "required" };
+    stripUnsupportedParams("codebuddy-intl", "deepseek-v4.1-flash", asString);
+    expect(asString.tool_choice).toBe("required");
+
+    const other = { tool_choice: { type: "function", function: { name: "x" } } };
+    stripUnsupportedParams("openai", "gpt-5", other);
+    expect(other.tool_choice).toEqual({ type: "function", function: { name: "x" } });
+  });
 });

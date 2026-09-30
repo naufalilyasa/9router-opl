@@ -30,6 +30,21 @@ const STRIP_RULES = [
   { provider: "groq", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
   { provider: "mistral", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
   { provider: "cerebras", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
+  // CodeBuddy gateways (intl + cn) parse tool_choice as a plain string; OpenAI-style
+  // object forms ({"type":"function","function":{name}}, {"type":"auto"}, …) are
+  // rejected with 11101 "cannot unmarshal object into … Request.tool_choice of type
+  // string". Coerce to the nearest string equivalent; string forms pass untouched.
+  { provider: "codebuddy-intl", toolChoiceStringify: true },
+  { provider: "codebuddy-cn", toolChoiceStringify: true },
+  // CodeBuddy gateways reject tool definitions whose parameters schema lacks
+  // `type: "object"` (11129 "invalid function call parameters"). Default the shape.
+  { provider: "codebuddy-intl", toolParametersDefaults: true },
+  { provider: "codebuddy-cn", toolParametersDefaults: true },
+  // OpenCode Zen Go (direct or via sleev-style proxies) runs tool schemas through
+  // a Go regexp validator that rejects the `pattern` keyword with
+  // "[invalid_request_error] Invalid schema for function '…': … is not a regex".
+  // Default the shape and strip the keyword there too.
+  { provider: "opencode-go", toolParametersDefaults: true },
 ];
 
 // Test a rule's match (regex or predicate) against the model id.
@@ -42,6 +57,27 @@ function clampNumber(body, key, ceiling) {
   if (typeof body[key] === "number" && Number.isFinite(body[key]) && body[key] > ceiling) {
     body[key] = ceiling;
   }
+}
+
+// JSON Schema keywords a strict upstream validator rejects. Proven against
+// CodeBuddy: `pattern` anywhere inside a tool schema → 400.
+const REJECTED_SCHEMA_KEYWORDS = ["pattern"];
+
+// Delete rejected keywords from a tool schema in place, recursing into
+// properties/items/combinators. Arrays of primitives (enum, required) are
+// left untouched by the object check on their elements.
+// Only the string-valued keyword is rejected: a *property named* `pattern`
+// (glob/grep declare one) holds a subschema object and must survive intact.
+function stripSchemaKeywords(schema) {
+  if (Array.isArray(schema)) {
+    for (const item of schema) stripSchemaKeywords(item);
+    return;
+  }
+  if (!schema || typeof schema !== "object") return;
+  for (const key of REJECTED_SCHEMA_KEYWORDS) {
+    if (typeof schema[key] === "string") delete schema[key];
+  }
+  for (const value of Object.values(schema)) stripSchemaKeywords(value);
 }
 
 // Remove unsupported params from body in place; returns body.
@@ -69,6 +105,31 @@ export function stripUnsupportedParams(provider, model, body) {
           msg.content = msg.content
             .map(b => (b?.type === "text" && typeof b.text === "string") ? b.text : "")
             .join("");
+        }
+      }
+    }
+    // CodeBuddy gateways: object tool_choice → nearest string enum (upstream parses a string only)
+    if (rule.toolChoiceStringify && body.tool_choice && typeof body.tool_choice === "object") {
+      const kind = body.tool_choice.type;
+      body.tool_choice = kind === "function" || kind === "tool" || kind === "any"
+        ? "required"
+        : kind === "auto" || kind === "none" || kind === "required"
+          ? kind
+          : "auto";
+    }
+    // CodeBuddy gateways: every tool parameters schema needs `type: "object"`,
+    // and the `pattern` keyword is rejected anywhere inside a tool schema.
+    if (rule.toolParametersDefaults && Array.isArray(body.tools)) {
+      for (const tool of body.tools) {
+        if (!tool || typeof tool !== "object") continue;
+        const holder = tool.function && typeof tool.function === "object" ? tool.function : tool;
+        const schema = holder.parameters;
+        if (schema === undefined || schema === null) {
+          holder.parameters = { type: "object", properties: {} };
+        } else if (typeof schema === "object" && !Array.isArray(schema)) {
+          if (schema.type === undefined) schema.type = "object";
+          if (schema.properties === undefined) schema.properties = {};
+          stripSchemaKeywords(schema);
         }
       }
     }
