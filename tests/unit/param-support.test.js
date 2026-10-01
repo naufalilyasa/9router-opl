@@ -122,4 +122,26 @@ describe("stripUnsupportedParams", () => {
     stripUnsupportedParams("openai", "gpt-5", other);
     expect(other.tool_choice).toEqual({ type: "function", function: { name: "x" } });
   });
+
+  it("renames CodeBuddy max_completion_tokens to max_tokens (11133 otherwise)", () => {
+    for (const provider of ["codebuddy-intl", "codebuddy-cn"]) {
+      const only = { max_completion_tokens: 298380 };
+      stripUnsupportedParams(provider, "deepseek-v4.1-flash", only);
+      expect(only).toEqual({ max_tokens: 298380 });
+
+      const both = { max_tokens: 4096, max_completion_tokens: 298380 };
+      stripUnsupportedParams(provider, "deepseek-v4.1-flash", both);
+      expect(both).toEqual({ max_tokens: 4096 });
+
+      const neither = { temperature: 0.5 };
+      stripUnsupportedParams(provider, "deepseek-v4.1-flash", neither);
+      expect(neither).toEqual({ temperature: 0.5 });
+    }
+  });
+
+  it("leaves max_completion_tokens alone for other providers", () => {
+    const body = { max_completion_tokens: 8192 };
+    stripUnsupportedParams("openai", "gpt-5", body);
+    expect(body.max_completion_tokens).toBe(8192);
+  });
 });

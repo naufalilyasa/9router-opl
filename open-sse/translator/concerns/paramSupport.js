@@ -40,6 +40,13 @@ const STRIP_RULES = [
   // `type: "object"` (11129 "invalid function call parameters"). Default the shape.
   { provider: "codebuddy-intl", toolParametersDefaults: true },
   { provider: "codebuddy-cn", toolParametersDefaults: true },
+  // CodeBuddy intl rejects `max_completion_tokens` (newer OpenAI field) with 11133
+  // "Invalid request parameters" — verified live 2026-10-01: same body with
+  // max_tokens 200, with max_completion_tokens 400. CodeBuddy cn accepts both, but
+  // normalize there too so the gateways stay interchangeable. Rename when
+  // max_tokens is absent, drop the field when both are present (cn keeps max_tokens).
+  { provider: "codebuddy-intl", normalizeMaxTokens: true },
+  { provider: "codebuddy-cn", normalizeMaxTokens: true },
   // OpenCode Zen Go (direct or via sleev-style proxies) runs tool schemas through
   // a Go regexp validator that rejects the `pattern` keyword with
   // "[invalid_request_error] Invalid schema for function '…': … is not a regex".
@@ -116,6 +123,11 @@ export function stripUnsupportedParams(provider, model, body) {
         : kind === "auto" || kind === "none" || kind === "required"
           ? kind
           : "auto";
+    }
+    // CodeBuddy intl: max_completion_tokens → max_tokens (11133 otherwise)
+    if (rule.normalizeMaxTokens && body.max_completion_tokens !== undefined) {
+      if (body.max_tokens === undefined) body.max_tokens = body.max_completion_tokens;
+      delete body.max_completion_tokens;
     }
     // CodeBuddy gateways: every tool parameters schema needs `type: "object"`,
     // and the `pattern` keyword is rejected anywhere inside a tool schema.
