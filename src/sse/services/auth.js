@@ -18,6 +18,36 @@ function githubMonthlyResetMs(status, errorText, provider) {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
 }
 
+// ─── Session affinity (provider strategy "session-affinity") ─────────
+// Pins one account per conversation so multi-turn sessions never hop
+// accounts mid-conversation (round-robin would). RAM only; when the pinned
+// account is unavailable the session re-pins to the least-recently-used one.
+const SESSION_PIN_MAX = 5000;
+const SESSION_PIN_TTL_MS = 2 * 60 * 60 * 1000;
+const sessionAffinityPins = new Map(); // `${providerId}:${sessionKey}` → { connectionId, lastUsed }
+
+function getSessionPin(key) {
+  const pin = sessionAffinityPins.get(key);
+  if (!pin) return null;
+  if (Date.now() - pin.lastUsed > SESSION_PIN_TTL_MS) {
+    sessionAffinityPins.delete(key);
+    return null;
+  }
+  // LRU refresh
+  sessionAffinityPins.delete(key);
+  pin.lastUsed = Date.now();
+  sessionAffinityPins.set(key, pin);
+  return pin;
+}
+
+function setSessionPin(key, connectionId) {
+  sessionAffinityPins.delete(key);
+  sessionAffinityPins.set(key, { connectionId, lastUsed: Date.now() });
+  while (sessionAffinityPins.size > SESSION_PIN_MAX) {
+    sessionAffinityPins.delete(sessionAffinityPins.keys().next().value);
+  }
+}
+
 /**
  * Get provider credentials from localDb
  * Filters out unavailable accounts and returns the selected account based on strategy
@@ -32,6 +62,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
   const requestedModel = options?.requestedModel || model;
+  // Conversation-stable key for the "session-affinity" strategy (see resolveRoutingSessionKey)
+  const sessionKey = options?.sessionKey || null;
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionMutex;
   let resolveMutex;
@@ -140,6 +172,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Per-provider strategy overrides global setting
     const providerOverride = (settings.providerStrategies || {})[providerId] || {};
     const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
+    // "session-affinity" works either as an explicit strategy or as a flag
+    // (the dashboard toggle writes { sessionAffinity: true }).
+    const useSessionAffinity = providerOverride.sessionAffinity === true || strategy === "session-affinity";
 
     let connection;
     // Pin to preferred connection if specified and available
@@ -151,7 +186,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     if (connection) {
       // skip strategy
-    } else if (strategy === "round-robin") {
+    } else if (strategy === "round-robin" && !useSessionAffinity) {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
       // Sort by lastUsed (most recent first) to find current candidate
@@ -189,6 +224,40 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           lastUsedAt: new Date().toISOString(),
           consecutiveUseCount: 1
         });
+      }
+    } else if (useSessionAffinity) {
+      // One account per session: pin the session's account and keep it for
+      // every later turn. New sessions (and failed pins) take the least
+      // recently used account so load still spreads across the pool.
+      const pinKey = sessionKey ? `${providerId}:${sessionKey}` : null;
+      const pinned = pinKey ? getSessionPin(pinKey) : null;
+      const pinnedConn = pinned ? availableConnections.find((c) => c.id === pinned.connectionId) : null;
+      const label = (c) => `${c.id?.slice(0, 8)} (${c.name || c.email || "unnamed"})`;
+      if (pinnedConn) {
+        connection = pinnedConn;
+        await updateProviderConnection(connection.id, {
+          lastUsedAt: new Date().toISOString(),
+          consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
+        });
+        log.info("AUTH", `${provider} | session-affinity ${sessionKey.slice(0, 16)} → keep ${label(connection)}`);
+      } else {
+        const sortedByOldest = [...availableConnections].sort((a, b) => {
+          if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
+          if (!a.lastUsedAt) return -1;
+          if (!b.lastUsedAt) return 1;
+          return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
+        });
+        connection = sortedByOldest[0];
+        await updateProviderConnection(connection.id, {
+          lastUsedAt: new Date().toISOString(),
+          consecutiveUseCount: 1
+        });
+        if (pinKey) {
+          setSessionPin(pinKey, connection.id);
+          log.info("AUTH", `${provider} | session-affinity ${sessionKey.slice(0, 16)} → pin ${label(connection)}`);
+        } else {
+          log.info("AUTH", `${provider} | session-affinity (no session key) → LRU ${label(connection)}`);
+        }
       }
     } else {
       // Default: fill-first (already sorted by priority in getProviderConnections)

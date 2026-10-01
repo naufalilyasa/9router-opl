@@ -157,6 +157,52 @@ function extractClientSessionId(headers, body, scope = "") {
     return fromBody || null;
 }
 
+// ─── Routing session key (account affinity) ─────────────────────────
+// Conversation-stable key for the "session-affinity" provider strategy.
+// Deliberately excludes x-client-request-id: clients that mint a fresh uuid
+// per request would otherwise shatter affinity. Falls back to a hash of the
+// first user message, which is identical on every turn of a conversation.
+const ROUTING_HEADER_KEYS = ["x-session-id", "session-id", "session_id", "x-amp-thread-id"];
+const ROUTING_FIRST_USER_CAP = 512;
+
+function firstUserText(body) {
+    const items = requestMessages(body);
+    for (const item of items) {
+        if (item?.role !== "user") continue;
+        if (typeof item.content === "string") return item.content;
+        if (Array.isArray(item.content)) {
+            let text = "";
+            for (const c of item.content) text += c?.text || "";
+            if (text) return text;
+        }
+    }
+    return "";
+}
+
+/**
+ * Resolve a conversation-stable key used to pin one provider account per
+ * session. Priority: Claude Code session → client session headers → body
+ * session fields (prompt_cache_key/session_id/conversation_id) → first user
+ * message hash. Returns null when the request carries no stable signal.
+ */
+export function resolveRoutingSessionKey({ headers, body } = {}) {
+    const claude = extractClaudeCodeSession(body?.metadata?.user_id)
+        || headerValue(headers, CLAUDE_CODE_SESSION_HEADER);
+    if (claude) return `claude:${claude}`;
+    for (const key of ROUTING_HEADER_KEYS) {
+        const v = headerValue(headers, key);
+        if (v) return v;
+    }
+    const fromBody =
+        normalizeSessionId(body?.prompt_cache_key) ||
+        normalizeSessionId(body?.session_id) ||
+        normalizeSessionId(body?.conversation_id);
+    if (fromBody) return fromBody;
+    const text = firstUserText(body).trim();
+    if (text) return `msg1:${sha16(text.slice(0, ROUTING_FIRST_USER_CAP))}`;
+    return null;
+}
+
 function requestMessages(body) {
     if (Array.isArray(body?.messages)) return body.messages;
     if (Array.isArray(body?.input)) return body.input;

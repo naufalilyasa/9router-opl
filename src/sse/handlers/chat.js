@@ -25,6 +25,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { resolveRoutingSessionKey } from "open-sse/utils/sessionManager.js";
 
 /**
  * Handle chat completion request
@@ -226,6 +227,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
+  // Conversation-stable key for "session-affinity" providers (e.g. cbai/cbcn):
+  // pins one account per session instead of round-robining every request.
+  const sessionKey = resolveRoutingSessionKey({ headers: clientRawRequest?.headers, body });
+
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
   let lastError = null;
@@ -233,7 +238,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastHeaders = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model, sessionKey });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

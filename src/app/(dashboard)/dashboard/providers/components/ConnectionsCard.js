@@ -304,6 +304,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [providerStrategy, setProviderStrategy] = useState(null);
   const [providerStickyLimit, setProviderStickyLimit] = useState("1");
+  const [sessionAffinity, setSessionAffinity] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
 
   const fetch_ = useCallback(async () => {
@@ -321,13 +322,14 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+      setSessionAffinity(override.sessionAffinity === true);
     } catch (e) { console.log("ConnectionsCard fetch error:", e); }
     finally { setLoading(false); }
   }, [providerId]);
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
-  const saveStrategy = async (strategy, stickyLimit) => {
+  const saveStrategy = async (strategy, stickyLimit, sessionAffinity = null) => {
     try {
       const res = await fetch("/api/settings", { cache: "no-store" });
       const data = res.ok ? await res.json() : {};
@@ -335,6 +337,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
       const override = {};
       if (strategy) override.fallbackStrategy = strategy;
       if (strategy === "round-robin" && stickyLimit !== "") override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      if (sessionAffinity === true) override.sessionAffinity = true;
       const updated = { ...current };
       if (Object.keys(override).length === 0) delete updated[providerId];
       else updated[providerId] = override;
@@ -411,7 +414,9 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                 const strategy = enabled ? "round-robin" : null;
                 setProviderStrategy(strategy);
                 if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
-                saveStrategy(strategy, enabled ? (providerStickyLimit || "1") : providerStickyLimit);
+                // Round Robin and Session Affinity are mutually exclusive
+                if (enabled) setSessionAffinity(false);
+                saveStrategy(strategy, enabled ? (providerStickyLimit || "1") : providerStickyLimit, enabled ? false : null);
               }}
             />
             {providerStrategy === "round-robin" && (
@@ -424,6 +429,20 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                 />
               </div>
             )}
+            <span className="text-xs text-text-muted font-medium">Session Affinity</span>
+            <Toggle
+              checked={sessionAffinity}
+              onChange={(enabled) => {
+                setSessionAffinity(enabled);
+                if (enabled) {
+                  // One account per session replaces per-request rotation
+                  setProviderStrategy(null);
+                  saveStrategy(null, providerStickyLimit, true);
+                } else {
+                  saveStrategy(providerStrategy, providerStickyLimit, false);
+                }
+              }}
+            />
           </div>
         </div>
 
