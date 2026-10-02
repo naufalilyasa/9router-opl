@@ -1,8 +1,3 @@
-# Unreleased
-
-## Features
-- **Providers**: add `sessionAffinity` provider strategy — pins one account per conversation (keyed on client session id or the first user message) so multi-turn sessions stop hopping accounts mid-conversation. Dashboard toggle "Session Affinity" on the provider page; enabled for cbai/cbcn on this machine.
-
 # v0.5.95 (2026-10-01)
 
 ## Features
