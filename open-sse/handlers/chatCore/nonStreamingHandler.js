@@ -351,6 +351,8 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   if (!isClaudeMessageResponse && !isResponsesResponse) {
     if (!translatedResponse.object) translatedResponse.object = "chat.completion";
     if (!translatedResponse.created) translatedResponse.created = Math.floor(Date.now() / 1000);
+    const clientModel = clientRawRequest?.body?.model || body?.model;
+    if (clientModel) translatedResponse.model = clientModel;
   }
 
   // Strip Azure-specific fields

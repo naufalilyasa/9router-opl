@@ -276,7 +276,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
           id: jsonResponse.id || `chatcmpl-${Date.now()}`,
           object: "chat.completion",
           created: jsonResponse.created_at || Math.floor(Date.now() / 1000),
-          model: jsonResponse.model || model,
+          model: clientRawRequest?.body?.model || jsonResponse.model || model,
           choices: [{ index: 0, message, finish_reason: finishReason }],
           usage: { prompt_tokens: inTokens, completion_tokens: outTokens, total_tokens: inTokens + outTokens, ...cacheDetails }
         };
@@ -348,6 +348,9 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
           delete choice.message.reasoning_content;
         }
       }
+    }
+    if (clientRawRequest?.body?.model && parsed) {
+      parsed.model = clientRawRequest.body.model;
     }
 
     // A Responses-format client (e.g. Codex) forced this provider to stream,
