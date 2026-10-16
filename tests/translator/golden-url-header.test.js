@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { PROVIDERS } from "../../open-sse/config/providers.js";
 import { DefaultExecutor } from "../../open-sse/executors/default.js";
+import { hasSpecializedExecutor } from "../../open-sse/executors/index.js";
 
 // Credentials mẫu cố định (deterministic) — KHÔNG dùng Date.now/random.
 const API_KEY_CRED = { apiKey: "sk-test-APIKEY", providerSpecificData: {} };
@@ -36,7 +37,9 @@ function sanitize(headers) {
   return out;
 }
 
-const providerIds = Object.keys(PROVIDERS).filter((p) => !SPECIALIZED.has(p)).sort();
+const providerIds = Object.keys(PROVIDERS)
+  .filter((p) => !SPECIALIZED.has(p) && !hasSpecializedExecutor(p))
+  .sort();
 
 describe("GOLDEN buildUrl (default executor providers)", () => {
   for (const pid of providerIds) {
