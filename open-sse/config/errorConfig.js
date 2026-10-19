@@ -74,6 +74,13 @@ export const ERROR_RULES = [
   { status: 403, cooldownMs: COOLDOWN.long },
   { status: 404, cooldownMs: COOLDOWN.long },
   { status: 429, backoff: true },
+
+  // --- Post-status provider-scoped text rules ---
+  // Placed after status rules so account-scoped statuses (e.g. 403 account ban
+  // returning 11140 "request illegal") keep their 120s cooldown rather than
+  // hitting this rule. Matches codebuddy-intl 400 11128 WAF blocks.
+  // ponytail: fixed 120s cooldown, upgrade to IP-scoped backoff if upstream block frequency spikes
+  { provider: "codebuddy-intl", text: "request illegal", cooldownMs: COOLDOWN.long },
 ];
 
 // Backward compat: COOLDOWN_MS object (used by index.js re-export)

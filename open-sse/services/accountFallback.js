@@ -218,7 +218,7 @@ export function applyErrorState(account, status, errorText) {
   if (!account) return account;
 
   const backoffLevel = account.backoffLevel || 0;
-  const { cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel);
+  const { cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel, account.provider);
 
   return {
     ...account,
