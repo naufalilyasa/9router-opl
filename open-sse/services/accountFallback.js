@@ -131,12 +131,18 @@ export function getModelLockKey(model) {
 /**
  * Check if a model lock on a connection is still active.
  * Reads flat field `modelLock_${model}` (or `modelLock___all` when model=null).
+ *
+ * Both keys are evaluated, not just the first one present: a per-model lock can
+ * be older than an account-wide one (a 429 on glm-5.2 at T0, then a 403 ban at
+ * T0+5s), and `connection[key] || connection[MODEL_LOCK_ALL]` would let the
+ * expired per-model value shadow a live account-wide lock — leaving a banned
+ * account in the rotation for every other model.
  */
 export function isModelLockActive(connection, model) {
   const key = getModelLockKey(model);
-  const expiry = connection[key] || connection[MODEL_LOCK_ALL];
-  if (!expiry) return false;
-  return new Date(expiry).getTime() > Date.now();
+  const now = Date.now();
+  const live = (value) => Boolean(value) && new Date(value).getTime() > now;
+  return live(connection[key]) || live(connection[MODEL_LOCK_ALL]);
 }
 
 /**

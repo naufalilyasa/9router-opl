@@ -121,6 +121,36 @@ describe("account-wide lock lifecycle", () => {
     expect(isModelLockActive(conn, "glm-5.2")).toBe(false);
   });
 
+  // Regression: `connection[key] || connection[MODEL_LOCK_ALL]` picked the first
+  // key with a value, not the one that is still live. A stale per-model lock left
+  // over from an earlier 429 shadowed a newer account-wide ban, so a banned
+  // account stayed selectable for every model except that one.
+  it("does not let an expired per-model lock shadow a live account-wide lock", () => {
+    const conn = {
+      "modelLock_kimi-k2.6": "2026-10-19T15:59:00.000Z", // expired
+      modelLock___all: "2026-10-19T16:02:00.000Z",       // live
+    };
+    expect(isModelLockActive(conn, "kimi-k2.6")).toBe(true);
+    expect(isModelLockActive(conn, "glm-5.2")).toBe(true);
+  });
+
+  it("still reports the per-model lock when only that one is live", () => {
+    const conn = {
+      "modelLock_kimi-k2.6": "2026-10-19T16:02:00.000Z", // live
+      modelLock___all: "2026-10-19T15:59:00.000Z",       // expired
+    };
+    expect(isModelLockActive(conn, "kimi-k2.6")).toBe(true);
+    expect(isModelLockActive(conn, "glm-5.2")).toBe(false);
+  });
+
+  it("reports no lock when both keys are expired", () => {
+    const conn = {
+      "modelLock_kimi-k2.6": "2026-10-19T15:59:00.000Z",
+      modelLock___all: "2026-10-19T15:58:00.000Z",
+    };
+    expect(isModelLockActive(conn, "kimi-k2.6")).toBe(false);
+  });
+
   it("clears the account-wide lock on a successful request", async () => {
     const conn = {
       modelLock___all: "2026-10-19T16:02:00.000Z",
