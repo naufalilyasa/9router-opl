@@ -50,11 +50,13 @@ const COOLDOWN = {
 /**
  * Unified error classification rules.
  * Checked top-to-bottom: text rules first (by order), then status rules.
- * Each rule: { text?, status?, cooldownMs?, backoff? }
+ * Each rule: { text?, status?, cooldownMs?, backoff?, scope? }
  *   - text: substring match (case-insensitive) on error message
  *   - status: HTTP status code match
  *   - cooldownMs: fixed cooldown duration
  *   - backoff: true = use exponential backoff (rate limit)
+ *   - scope: "account" = lock every model on this connection, not just the one
+ *     that failed. Only for failures that live on the credential itself.
  */
 export const ERROR_RULES = [
   // --- Text-based rules (checked first, order = priority) ---
@@ -69,9 +71,14 @@ export const ERROR_RULES = [
   { text: "overloaded",               backoff: true },
 
   // --- Status-based rules (fallback when text doesn't match) ---
-  { status: 401, cooldownMs: COOLDOWN.long },
+  // 401/403 describe the credential, not the model: a rejected key, a revoked
+  // grant, an exhausted plan or an account ban answers the same way for every
+  // model. Locking only the model that happened to fail leaves the account first
+  // in the rotation, so each request pays the upstream round-trip before failing
+  // over. scope:"account" makes the lock cover the whole connection.
+  { status: 401, cooldownMs: COOLDOWN.long, scope: "account" },
   { status: 402, cooldownMs: COOLDOWN.long },
-  { status: 403, cooldownMs: COOLDOWN.long },
+  { status: 403, cooldownMs: COOLDOWN.long, scope: "account" },
   { status: 404, cooldownMs: COOLDOWN.long },
   { status: 429, backoff: true },
 
