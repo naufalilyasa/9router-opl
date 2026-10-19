@@ -327,6 +327,30 @@ export const PROVIDER_CAPABILITIES = {
     // published efforts from low/high/xhigh to low/high/max.
     "deepseek-v4.1-flash": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 393216 },
   },
+  // CodeBuddy intl — same gateway backend as CN, but its own id set (see the
+  // drop log in providers/registry/codebuddy-intl.js). Without this block the
+  // intl models fall through to the global name patterns, which get the
+  // thinking format wrong: the gateway speaks OpenAI-style reasoning_effort
+  // for every model (transport.thinkingFormat "openai"), yet the *zai* / *kimi*
+  // / *hunyuan* patterns would emit native vendor shapes. hy4-preview even fell
+  // through to reasoning:false. Values mirror the CN table where the id is shared.
+  "codebuddy-intl": {
+    "glm-5.2":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 131072 },
+    "glm-5.1":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 48000 },
+    "glm-5.0":             { reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 48000 },
+    "glm-5v-turbo":        { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 200000, maxOutput: 131072 },
+    "glm-5.3":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 131072 },
+    "glm-5.3-flash":       { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 131072 },
+    "minimax-m3":          { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 512000, maxOutput: 524288 },
+    "kimi-k2.7":           { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 },
+    "kimi-k2.6":           { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 },
+    "kimi-k2.5":           { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 164000, maxOutput: 32000 },
+    "kimi-k2.8-preview":   { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 300000, maxOutput: 131072 },
+    "kimi-k3":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1048576, maxOutput: 131072 },
+    "hy3":                 { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 192000, maxOutput: 64000 },
+    "hy4-preview":         { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 64000 },
+    "deepseek-v4.1-flash": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 393216 },
+  },
   // Poolside Laguna — OpenAI-compatible, all reasoning-capable (32K max output).
   "poolside": {
     "laguna-s-2.1":  { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 32000 },
@@ -367,8 +391,7 @@ export const PROVIDER_CAPABILITIES = {
 
 // Qoder CN serves the identical model catalog from the CN gateway, so it shares
 // the intl Qoder capability table verbatim (vision/reasoning/contextWindow).
-PROVIDER_CAPABILITIES["qoder-cn"] = PROVIDER_CAPABILITIES["qoder"];
-PROVIDER_CAPABILITIES.cx = PROVIDER_CAPABILITIES.codex;
+PROVIDER_CAPABILITIES["qoder-cn"] = PROVIDER_CAPABILITIES["qoder"];PROVIDER_CAPABILITIES.cx = PROVIDER_CAPABILITIES.codex;
 PROVIDER_CAPABILITIES.dv = PROVIDER_CAPABILITIES["devin-cli"];
 PROVIDER_CAPABILITIES.devin = PROVIDER_CAPABILITIES["devin-cli"];
 // The global mcode site serves the same catalog — share the capability table.

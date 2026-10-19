@@ -56,11 +56,15 @@ const PATTERN_THINKING = [
   // DeepSeek v4.* (Alibaba MaaS, probed live): effort low|medium|high|xhigh|max
   // all 200 via output_config.effort; "none" is a 400 on the anthropic route
   // (disable thinking instead). none kept for the picker = disable.
-  // ⚠️ The codebuddy-cn exact ids below MUST stay above this unqualified glob —
-  // PATTERN_THINKING is first-match-wins, so a later provider-qualified entry
-  // would never fire for dotted ids like deepseek-v4.1-flash.
+  // ⚠️ The codebuddy-cn / codebuddy-intl exact ids below MUST stay above this
+  // unqualified glob — PATTERN_THINKING is first-match-wins, so a later
+  // provider-qualified entry would never fire for dotted ids like
+  // deepseek-v4.1-flash.
   { provider: "codebuddy-cn", pattern: "deepseek-v4-pro",     levels: ["low", "high", "xhigh"] },
   { provider: "codebuddy-cn", pattern: "deepseek-v4.1-flash", levels: ["low", "high", "max"] },
+  // codebuddy-intl rides the same gateway catalog as CN, so its per-model
+  // effort sets match. These MUST sit above the unqualified glob below.
+  { provider: "codebuddy-intl", pattern: "deepseek-v4.1-flash", levels: ["low", "high", "max"] },
   { pattern: "*deepseek-v4.*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
   // codebuddy-cn per-model effort sets — the server's product-config payload
   // publishes `reasoning.supportedEfforts` per model. NOTE: the chat endpoint
@@ -75,8 +79,13 @@ const PATTERN_THINKING = [
   { provider: "codebuddy-cn", pattern: "kimi-k2.8-preview",  levels: ["low", "medium", "high"] },
   { provider: "codebuddy-cn", pattern: "hy3",          levels: ["low", "high"] },
   { provider: "codebuddy-cn", pattern: "hy4-preview",  levels: ["high"] },
-  // codebuddy-intl rides the same gateway catalog, so its deepseek levels match.
-  { provider: "codebuddy-intl", pattern: "deepseek-v4*", levels: ["low", "high", "xhigh"] },
+  // codebuddy-intl — same catalog, same declared effort sets.
+  { provider: "codebuddy-intl", pattern: "glm-5.3",      levels: ["low", "high", "max"] },
+  { provider: "codebuddy-intl", pattern: "glm-5.3-flash", levels: ["low", "high", "max"] },
+  { provider: "codebuddy-intl", pattern: "glm-5.2",      levels: ["high", "xhigh"] },
+  { provider: "codebuddy-intl", pattern: "kimi-k2.8-preview", levels: ["low", "medium", "high"] },
+  { provider: "codebuddy-intl", pattern: "hy3",          levels: ["low", "high"] },
+  { provider: "codebuddy-intl", pattern: "hy4-preview",  levels: ["high"] },
   // MiniMax Code (mcode) — adaptive effort via output_config.effort. M3.1
   // always thinks (no none); M3 is switchable with none/high only, per the
   // magpie static catalog. M2.7 pair falls through to the claude-adaptive
