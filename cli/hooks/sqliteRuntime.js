@@ -135,29 +135,66 @@ function isSqlJsWasmValid() {
   return fs.existsSync(runtimeWasm);
 }
 
+const SQLITE_RETRY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+function sqliteAttemptMarker() {
+  return path.join(getRuntimeDir(), ".sqlite-attempt");
+}
+
+// cli.js runs this synchronously on every start and npmInstall can block for up
+// to 180s, so a failed warm-up must not re-block the next launch. Retry daily.
+function recentlyAttemptedSqlite() {
+  try {
+    const at = Number(fs.readFileSync(sqliteAttemptMarker(), "utf8").trim());
+    return Number.isFinite(at) && Date.now() - at < SQLITE_RETRY_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+function markSqliteAttempt() {
+  try { fs.writeFileSync(sqliteAttemptMarker(), String(Date.now())); } catch {}
+}
+
+// Cleared on success so the cooldown only ever throttles *failures* — mirrors
+// clearArm64Attempt() in trayRuntime.js.
+function clearSqliteAttempt() {
+  try { fs.rmSync(sqliteAttemptMarker(), { force: true }); } catch {}
+}
+
 function ensureSqliteRuntime({ silent = false } = {}) {
   ensureRuntimeDir();
 
-  let sqlJsOk = isSqlJsWasmValid();
-  if (!sqlJsOk) {
-    sqlJsOk = npmInstall([`sql.js@${SQL_JS_VERSION}`], { silent });
-    if (sqlJsOk) sqlJsOk = isSqlJsWasmValid();
+  const sqlJsOk = isSqlJsWasmValid();
+  const needBetterSqlite = !hasModule("better-sqlite3") || !isBetterSqliteBinaryValid();
+
+  if (sqlJsOk && !needBetterSqlite) {
+    clearSqliteAttempt();
+    if (!silent) console.log("✅ SQLite engine ready");
+    return { betterSqlite: true, sqlJs: true };
   }
 
-  const needBetterSqlite = !hasModule("better-sqlite3") || !isBetterSqliteBinaryValid();
-  if (!needBetterSqlite) {
-    if (!silent) console.log("✅ SQLite engine ready");
-    return { betterSqlite: true, sqlJs: sqlJsOk };
+  // Checked before *any* install: the sql.js path below is just as slow as the
+  // better-sqlite3 one, so gating only the latter still stalls every start.
+  if (recentlyAttemptedSqlite()) {
+    return { betterSqlite: !needBetterSqlite, sqlJs: sqlJsOk, skipped: true };
   }
+  markSqliteAttempt();
+
+  const sqlJsReady = sqlJsOk
+    ? true
+    : npmInstall([`sql.js@${SQL_JS_VERSION}`], { silent }) && isSqlJsWasmValid();
 
   // npm injects an implicit `node-gyp rebuild` for any package carrying a
   // binding.gyp, which would demand build tools even though 13.x already bundles
   // the binary — skip scripts so the bundled prebuild is used as-is.
-  const ok = npmInstall([`better-sqlite3@${BETTER_SQLITE3_VERSION}`], { optional: true, silent, ignoreScripts: USE_NAPI_BUILD });
-  return {
-    betterSqlite: ok && hasModule("better-sqlite3") && isBetterSqliteBinaryValid(),
-    sqlJs: sqlJsOk,
-  };
+  const betterSqliteReady = needBetterSqlite
+    ? npmInstall([`better-sqlite3@${BETTER_SQLITE3_VERSION}`], { optional: true, silent, ignoreScripts: USE_NAPI_BUILD })
+      && hasModule("better-sqlite3")
+      && isBetterSqliteBinaryValid()
+    : true;
+
+  if (sqlJsReady && betterSqliteReady) clearSqliteAttempt();
+  return { betterSqlite: betterSqliteReady, sqlJs: sqlJsReady };
 }
 
 // Inject runtime + bundled node_modules into NODE_PATH so child Node processes

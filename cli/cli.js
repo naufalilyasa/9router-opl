@@ -94,6 +94,50 @@ if (args[0] === "connect" || args[0] === "show") {
   return;
 }
 
+// Configuration constants
+const APP_NAME = pkg.name; // Use from package.json
+const INSTALL_CMD_LATEST = `npm i -g ${APP_NAME}@latest --prefer-online`;
+
+const DEFAULT_PORT = 20128;
+const DEFAULT_HOST = "0.0.0.0";
+
+const HELP_TEXT = `
+Usage: ${APP_NAME} [options]
+
+Options:
+  -p, --port <port>   Port to run the server (default: ${DEFAULT_PORT})
+  -H, --host <host>   Host to bind (default: ${DEFAULT_HOST})
+  -n, --no-browser    Don't open browser automatically
+  -l, --log           Show server logs (default: hidden)
+  -t, --tray          Run in system tray mode (background)
+  --skip-update       Skip auto-update check
+  -h, --help          Show this help message
+  -v, --version       Show version
+
+Commands:
+  connect <server-url> Configure Claude Code for a remote 9router server
+                      (npx 9router connect http://host:20128 — no install needed)
+  show [tool…]        Show each CLI tool's current 9router config and models
+                      (e.g. 9router show claude)
+  xai video --prompt "..." --output video.mp4
+                      Generate a Grok Imagine video via the running gateway
+                      (see: ${APP_NAME} xai video --help)
+`;
+
+// Informational flags short-circuit *before* the runtime self-heal hooks below.
+// They only print to stdout, and npmInstall() inside those hooks can block for
+// up to 180s — `9router --version` must never wait on that.
+for (const arg of args) {
+  if (arg === "--version" || arg === "-v") {
+    console.log(pkg.version);
+    process.exit(0);
+  }
+  if (arg === "--help" || arg === "-h") {
+    console.log(HELP_TEXT);
+    process.exit(0);
+  }
+}
+
 // Self-heal SQLite runtime deps (sql.js + better-sqlite3) into ~/.9router/runtime
 // so the server can resolve them via NODE_PATH. Best-effort — sql.js is required,
 // better-sqlite3 is optional. Logs to stderr only on failure.
@@ -101,13 +145,6 @@ try { ensureSqliteRuntime({ silent: true }); } catch {}
 
 // Self-heal tray runtime (systray for macOS/Linux only). Windows skipped.
 try { ensureTrayRuntime({ silent: true }); } catch {}
-
-// Configuration constants
-const APP_NAME = pkg.name; // Use from package.json
-const INSTALL_CMD_LATEST = `npm i -g ${APP_NAME}@latest --prefer-online`;
-
-const DEFAULT_PORT = 20128;
-const DEFAULT_HOST = "0.0.0.0";
 
 // First non-internal IPv4 — the address remote peers actually reach when bound to 0.0.0.0.
 function getLanIp() {
@@ -153,34 +190,8 @@ for (let i = 0; i < args.length; i++) {
   } else if (args[i] === "--tray" || args[i] === "-t") {
     trayMode = true;
     process.env.TRAY_MODE = "1";
-  } else if (args[i] === "--help" || args[i] === "-h") {
-    console.log(`
-Usage: ${APP_NAME} [options]
-
-Options:
-  -p, --port <port>   Port to run the server (default: ${DEFAULT_PORT})
-  -H, --host <host>   Host to bind (default: ${DEFAULT_HOST})
-  -n, --no-browser    Don't open browser automatically
-  -l, --log           Show server logs (default: hidden)
-  -t, --tray          Run in system tray mode (background)
-  --skip-update       Skip auto-update check
-  -h, --help          Show this help message
-  -v, --version       Show version
-
-Commands:
-  connect <server-url> Configure Claude Code for a remote 9router server
-                      (npx 9router connect http://host:20128 — no install needed)
-  show [tool…]        Show each CLI tool's current 9router config and models
-                      (e.g. 9router show claude)
-  xai video --prompt "..." --output video.mp4
-                      Generate a Grok Imagine video via the running gateway
-                      (see: ${APP_NAME} xai video --help)
-`);
-    process.exit(0);
-  } else if (args[i] === "--version" || args[i] === "-v") {
-    console.log(pkg.version);
-    process.exit(0);
   }
+  // --help/-h and --version/-v are handled by the early-exit loop above.
 }
 
 // Auto-relaunch after update: detached process has no TTY → fallback to tray

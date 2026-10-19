@@ -35,6 +35,9 @@ const LEGACY_SYSTRAY_PKG = "systray";
 const ARM64_TRAY_URL = "https://github.com/decolua/9router/releases/download/tray-binaries/tray_darwin_arm64";
 const ARM64_TRAY_SHA256 = "487e3c365aaa1eb6ad295bf3989711e975b52cee07505bf641c8559954881c81";
 const ARM64_RETRY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+// Same window as the arm64 overlay: one failed install must not block every
+// subsequent `9router` start for the rest of the day.
+const TRAY_RETRY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 function hasSystray() {
   return fs.existsSync(path.join(getRuntimeNodeModules(), SYSTRAY_PKG, "package.json"));
@@ -223,6 +226,38 @@ function npmInstall(pkgs, { silent = false } = {}) {
   return res.ok;
 }
 
+function trayAttemptMarker() {
+  return path.join(getRuntimeDir(), ".tray-install-attempt");
+}
+
+// ensureTrayRuntime runs synchronously on every `9router` start (cli.js), so a
+// failed npm install must not re-block the next launch. Retry at most daily.
+function recentlyAttemptedTray() {
+  try {
+    const at = Number(fs.readFileSync(trayAttemptMarker(), "utf8").trim());
+    return Number.isFinite(at) && Date.now() - at < TRAY_RETRY_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+// getRuntimeDir() is not guaranteed to exist yet — npmInstall() is what creates
+// it. mkdir first, otherwise writeFileSync throws ENOENT, the catch swallows it,
+// and the cooldown silently never engages.
+function markTrayAttempt() {
+  try {
+    ensureRuntimeDir();
+    fs.writeFileSync(trayAttemptMarker(), String(Date.now()));
+  } catch {}
+}
+
+// Cleared on success so the cooldown only ever throttles *failures*. Without
+// this, a successful install followed by a later removal would leave the user
+// waiting out the window instead of self-healing on the next start.
+function clearTrayAttempt() {
+  try { fs.rmSync(trayAttemptMarker(), { force: true }); } catch {}
+}
+
 // Public: ensure systray2 is installed on macOS/Linux only.
 // Windows skips entirely (uses PowerShell tray).
 function ensureTrayRuntime({ silent = false } = {}) {
@@ -236,8 +271,18 @@ function ensureTrayRuntime({ silent = false } = {}) {
 
   let ready = hasSystray();
   if (!ready) {
+    if (recentlyAttemptedTray()) {
+      // Same shape as the normal not-ready path so callers can read `.arm64`
+      // unconditionally.
+      return { systray: false, arm64: { skipped: true }, skipped: true };
+    }
+    markTrayAttempt();
     ready = npmInstall([`${SYSTRAY_PKG}@${SYSTRAY_VERSION}`], { silent }) && hasSystray();
   }
+  // Cleared whenever systray2 is present, including the already-installed path:
+  // a stale marker left by an older release would otherwise block the reinstall
+  // for up to a day after the package is removed again.
+  if (ready) clearTrayAttempt();
   if (ready) {
     chmodSystrayBin({ silent });
     if (!silent) console.log("✅ System tray ready");
