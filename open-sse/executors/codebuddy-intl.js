@@ -190,10 +190,14 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
             const dt = new Date(`${dp}T${tp}${tz}`);
             if (!isNaN(dt.getTime())) resetsAtMs = dt.getTime();
           }
+          if (!resetsAtMs) {
+            resetsAtMs = Date.now() + 10 * 60 * 1000;
+          }
           return {
             status: 429,
             message: msg || "CodeBuddy frequency limit (6004)",
             resetsAtMs,
+            scope: "account",
           };
         }
 

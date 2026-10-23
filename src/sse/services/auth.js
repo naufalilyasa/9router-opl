@@ -244,7 +244,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @param {string|null} model - The specific model that triggered the error
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
-export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
+export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null, customScope = null) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
@@ -262,10 +262,12 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
     // Antigravity quota API provides exact per-model resetAt. Do not truncate it.
+    // Other providers: honor exact resetsAt up to 6 hours.
     cooldownMs = resolveProviderId(provider) === "antigravity"
       ? resetsAtMs - Date.now()
-      : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
+      : Math.min(resetsAtMs - Date.now(), 6 * 3600 * 1000);
     newBackoffLevel = 0;
+    scope = customScope || checkFallbackError(status, errorText, backoffLevel, resolveProviderId(provider)).scope;
   } else {
     ({ shouldFallback, cooldownMs, newBackoffLevel, scope } = checkFallbackError(status, errorText, backoffLevel, resolveProviderId(provider)));
   }
@@ -275,7 +277,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   // `null` model → modelLock___all, which isModelLockActive() honours for every
   // model. Used for credential-scoped failures so the account drops out of the
   // rotation entirely instead of being retried once per model.
-  const lockAllModels = Boolean(githubResetAtMs) || scope === "account";
+  const lockAllModels = Boolean(githubResetAtMs) || scope === "account" || customScope === "account";
   const lockUpdate = buildModelLockUpdate(lockAllModels ? null : model, cooldownMs);
 
   await updateProviderConnection(connectionId, {

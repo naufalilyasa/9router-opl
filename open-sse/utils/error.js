@@ -50,11 +50,56 @@ export async function writeStreamError(writer, statusCode, message) {
   await writer.write(encoder.encode(`data: ${JSON.stringify(errorBody)}\n\n`));
 }
 
+function parseRetryHeaders(headers) {
+  if (!headers || typeof headers.get !== "function") return null;
+
+  const retryAfter = headers.get("retry-after") || headers.get("x-ratelimit-reset-after");
+  if (retryAfter) {
+    const seconds = parseInt(retryAfter, 10);
+    if (!isNaN(seconds) && seconds > 0) return Date.now() + seconds * 1000;
+
+    const date = new Date(retryAfter);
+    if (!isNaN(date.getTime()) && date.getTime() > Date.now()) {
+      return date.getTime();
+    }
+  }
+
+  const resetTimestamp = headers.get("x-ratelimit-reset");
+  if (resetTimestamp) {
+    const sec = parseInt(resetTimestamp, 10);
+    if (!isNaN(sec) && sec > 0) {
+      const ms = sec > 1e11 ? sec : sec * 1000;
+      if (ms > Date.now()) return ms;
+    }
+  }
+
+  return null;
+}
+
+function parseResetFromText(text) {
+  if (!text || typeof text !== "string") return null;
+  // Format 1: "reset after 1h2m3s" or "resets after 30s"
+  const m1 = text.match(/resets?\s+after\s+(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/i);
+  if (m1 && (m1[1] || m1[2] || m1[3])) {
+    const ms = ((parseInt(m1[1], 10) || 0) * 3600 + (parseInt(m1[2], 10) || 0) * 60 + (parseInt(m1[3], 10) || 0)) * 1000;
+    if (ms > 0) return Date.now() + ms;
+  }
+  // Format 2: "try again in 5 minutes" / "retry in 30 seconds" / "wait 10m"
+  const m2 = text.match(/(?:try again|retry|wait)\s+(?:in\s+)?(\d+)\s*(s(?:ec(?:ond)?s?)?|m(?:in(?:ute)?s?)?|h(?:our?s?)?)/i);
+  if (m2) {
+    const val = parseInt(m2[1], 10);
+    const unit = m2[2].toLowerCase()[0];
+    const mult = unit === "h" ? 3600 : (unit === "m" ? 60 : 1);
+    if (val > 0) return Date.now() + val * mult * 1000;
+  }
+  return null;
+}
+
 /**
  * Parse upstream provider error response
  * @param {Response} response - Fetch response from provider
  * @param {object} [executor] - Optional executor with parseError() override for provider-specific parsing
- * @returns {Promise<{statusCode: number, message: string, resetsAtMs?: number}>}
+ * @returns {Promise<{statusCode: number, message: string, resetsAtMs?: number, scope?: string}>}
  */
 export async function parseUpstreamError(response, executor = null) {
   let bodyText = "";
@@ -70,7 +115,11 @@ export async function parseUpstreamError(response, executor = null) {
       const parsed = executor.parseError(response, bodyText);
       if (parsed && typeof parsed === "object") {
         const msg = parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
-        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs };
+        let resetsAtMs = parsed.resetsAtMs;
+        if (!resetsAtMs) {
+          resetsAtMs = parseRetryHeaders(response?.headers) || parseResetFromText(msg);
+        }
+        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs, scope: parsed.scope };
       }
     } catch { /* fall through to default parsing */ }
   }
@@ -86,7 +135,9 @@ export async function parseUpstreamError(response, executor = null) {
   const messageStr = typeof message === "string" ? message : JSON.stringify(message);
   const finalMessage = messageStr || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
 
-  return { statusCode: response.status, message: finalMessage };
+  let resetsAtMs = parseRetryHeaders(response?.headers) || parseResetFromText(finalMessage);
+
+  return { statusCode: response.status, message: finalMessage, resetsAtMs };
 }
 
 /**
@@ -94,14 +145,17 @@ export async function parseUpstreamError(response, executor = null) {
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
  * @param {number} [resetsAtMs] - Optional precise cooldown expiry (ms epoch) for provider-specific quota errors
- * @returns {{ success: false, status: number, error: string, response: Response, resetsAtMs?: number }}
+ * @param {object} [extraHeaders] - Optional headers
+ * @param {string} [scope] - Optional scope e.g. "account"
+ * @returns {{ success: false, status: number, error: string, response: Response, resetsAtMs?: number, scope?: string }}
  */
-export function createErrorResult(statusCode, message, resetsAtMs, extraHeaders = null) {
+export function createErrorResult(statusCode, message, resetsAtMs, extraHeaders = null, scope = null) {
   return {
     success: false,
     status: statusCode,
     error: message,
     resetsAtMs,
+    scope,
     response: errorResponse(statusCode, message, extraHeaders)
   };
 }

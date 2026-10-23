@@ -99,6 +99,15 @@ describe("markAccountUnavailable — account-wide locks", () => {
     expect(writtenUpdate()).not.toHaveProperty("modelLock___all");
   });
 
+  it("writes modelLock___all for 429 when customScope is account (e.g. CodeBuddy 6004 frequency limit)", async () => {
+    const future = Date.now() + 600_000;
+    await markAccountUnavailable("cb-banned", 429, "frequency limit (6004)", "codebuddy-intl", "glm-5.2", future, "account");
+
+    expect(writtenUpdate()).toHaveProperty("modelLock___all");
+    expect(writtenUpdate()).not.toHaveProperty("modelLock_glm-5.2");
+    expect(new Date(writtenUpdate().modelLock___all).getTime()).toBe(future);
+  });
+
   it("keeps a 402 model-scoped (plan limits are per-model on some providers)", async () => {
     await markAccountUnavailable("cb-banned", 402, "Payment required", "github", "claude-fable-5");
 

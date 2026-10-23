@@ -399,7 +399,7 @@ export class CodexExecutor extends BaseExecutor {
             resetsAtMs = now + err.resets_in_seconds * 1000;
           }
           if (resetsAtMs) {
-            return { status: 429, message: err.message || bodyText, resetsAtMs };
+            return { status: 429, message: err.message || bodyText, resetsAtMs, scope: "account" };
           }
         }
       } catch { /* fall through to default */ }
