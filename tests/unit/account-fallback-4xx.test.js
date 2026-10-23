@@ -16,7 +16,7 @@ describe("checkFallbackError — request-scoped vs account-scoped failures", () 
       },
     }));
 
-    expect(result).toEqual({ shouldFallback: false, cooldownMs: 0 });
+    expect(result).toEqual({ shouldFallback: false, cooldownMs: 0, requestScoped: true });
   });
 
   it("still falls back for account-scoped statuses", () => {
@@ -47,7 +47,7 @@ describe("checkFallbackError — request-scoped vs account-scoped failures", () 
 
   it("does not fall back for an ordinary bad request", () => {
     expect(checkFallbackError(400, "Bad request")).toEqual({
-      shouldFallback: false, cooldownMs: 0,
+      shouldFallback: false, cooldownMs: 0, requestScoped: true,
     });
   });
 
