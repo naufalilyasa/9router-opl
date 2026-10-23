@@ -154,7 +154,8 @@ describe("checkFallbackError — request-scoped vs account-scoped failures", () 
         log,
       });
 
-      expect(handleSingleModel).toHaveBeenCalledTimes(1);
+      // With upstream v0.5.109 (commit 5cdcddf5), request-scoped 4xx advances to the next combo member
+      expect(handleSingleModel).toHaveBeenCalledTimes(2);
       expect(response.status).toBe(400);
     });
   });
