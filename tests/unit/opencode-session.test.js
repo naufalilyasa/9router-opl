@@ -87,6 +87,23 @@ describe("OpenCode Free Session ID Format", () => {
     expect(counterOf(generateZenSessionId(1_700_000_000_000))).toBe(1);
   });
 
+  // Upstream also decodes the prefix timestamp and answers 429 when it is in
+  // the future or older than the free-tier window (~60d). A digest-derived
+  // time is effectively uniform over 2^36 ms, so most ids were rejected.
+  it("mints translated sessions with the current time", () => {
+    const PREFIX_MASK = (1n << 48n) - 1n;
+    const MOD = 2 ** 36;
+    const timeOf = (id) => Number((~BigInt(`0x${id.slice(4, 16)}`) & PREFIX_MASK) >> 12n);
+    const circularDistance = (a, b) => Math.min((a - b + MOD) % MOD, (b - a + MOD) % MOD);
+
+    const before = Date.now();
+    const session = translateSessionId("timestamp-regression", "claude");
+    const after = Date.now();
+
+    const decoded = timeOf(session);
+    expect(circularDistance(decoded, before % MOD)).toBeLessThanOrEqual(after - before + 1000);
+  });
+
   it("preserves already-valid OpenCode sessions without re-hashing", () => {
     const valid = "ses_f534dfae8ffeCy4Ee4tLWNygDc";
     expect(translateSessionId(valid)).toBe(valid);
