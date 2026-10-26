@@ -171,6 +171,15 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
       }
     }
 
+    // Preserve session identifiers that the gateway may require in the request body
+    // (session_id / prompt_cache_key / conversation_id). These are used by the
+    // gateway for conversation tracking and prompt caching.
+    for (const key of ["session_id", "prompt_cache_key", "conversation_id"]) {
+      if (body && typeof body[key] === "string" && body[key]) {
+        transformed[key] = body[key];
+      }
+    }
+
     return transformed;
   }
   parseError(response, bodyText) {
@@ -202,16 +211,15 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
         }
 
         // Code 11128 is overloaded: it also carries "first message is not system
-        // prompt" (a body-shape problem fixed in transformRequest). Only the
-        // conversation-id variant is channel verification, so branch on the
-        // message, never on the code alone — otherwise the failure reads as a
-        // generic 400 and the cause has to be rediscovered from scratch.
-        if (data?.code === 11128 && /conversation id missing/i.test(msg)) {
+        // prompt" (a body-shape problem fixed in transformRequest) and "request illegal"
+        // (channel verification failure).
+        if (data?.code === 11128 && /conversation id missing|request illegal/i.test(msg)) {
           const tip = data?.displayTips?.en || data?.displayMsg?.en || "";
+          const variant = /conversation id missing/i.test(msg) ? "conversation id missing" : "request illegal";
           return {
             status: 400,
             message:
-              "CodeBuddy channel verification failed (11128 \"conversation id missing\"): "
+              `CodeBuddy channel verification failed (11128 "${variant}"): `
               + "the upstream gateway requires the X-Conversation-* header family the official "
               + "IDE sends, supplied by CodeBuddyIntlExecutor.buildHeaders(). If this appears, "
               + "the gate likely changed (e.g. a new required header)."
