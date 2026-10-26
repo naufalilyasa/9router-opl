@@ -9,6 +9,11 @@ import { isMuseSparkModel } from "../providers/models/helpers.js";
 import { applyFingerprintTools } from "../utils/opencodeFingerprint.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import {
+  findOpencodeBinary,
+  formatOpencodeCliPrompt,
+  executeOpencodeCli,
+} from "../utils/opencodeCliRunner.js";
+import {
   normalizeResponsesInput,
   clampResponsesCallId,
   coerceResponsesArguments,
@@ -169,6 +174,16 @@ export function stableSessionId(credentials) {
   }
   stableOpencodeSessions.set(key, { sessionId, lastUsed: Date.now() });
   return sessionId;
+}
+
+// Burn the stable session for this identity: the next request mints a fresh
+// canonical session, which upstream treats as a new quota window. Called only
+// after a FreeUsageLimitError — a fresh session per request would burn the
+// quota faster, so the stable one stays until it is actually exhausted.
+export function rotateOpencodeSession(credentials) {
+  const key = identityKey(credentials);
+  stableOpencodeSessions.delete(key);
+  return stableSessionId(credentials);
 }
 
 function bodyHasSessionHints(body) {
@@ -405,7 +420,67 @@ export class OpenCodeExecutor extends BaseExecutor {
   }
 
   async execute(args) {
-    return super.execute({ ...args, credentials: this.prepareRequestCredentials(args) });
+    const { model, body, proxyOptions, signal, log } = args;
+    const effectiveProxyOptions = (proxyOptions?.connectionProxyEnabled && proxyOptions?.connectionProxyUrl)
+      ? proxyOptions
+      : { ...proxyOptions, connectionProxyEnabled: false, connectionProxyUrl: "" };
+    const isTest = typeof process !== "undefined" && (process.env.VITEST || process.env.NODE_ENV === "test");
+    const opencodeBin = !isTest ? findOpencodeBinary() : null;
+    const promptText = opencodeBin ? formatOpencodeCliPrompt(body) : "";
+    const isSuitableForCli = Boolean(opencodeBin && promptText);
+    if (isSuitableForCli) {
+      try {
+        const rawModel = baseModelId(model || body?.model);
+        const targetModel = `opencode/${rawModel}`;
+
+        return await executeOpencodeCli({
+          opencodeBin,
+          targetModel,
+          promptText,
+          body,
+          proxyOptions: effectiveProxyOptions,
+          signal,
+          log,
+          rawModel,
+          providerTag: "OPENCODE",
+        });
+      } catch (err) {
+        log?.warn?.("OPENCODE", `CLI engine spawn failed, falling back to network wire: ${err.message}`);
+      }
+    }
+
+    const wireRes = await super.execute({
+      ...args,
+      proxyOptions: effectiveProxyOptions,
+      credentials: this.prepareRequestCredentials(args),
+    });
+
+    if ((wireRes?.response?.status === 429 || wireRes?.response?.status === 403) && opencodeBin && promptText) {
+      try {
+        const clone = wireRes.response.clone();
+        const text = await clone.text();
+        if (text.includes("FreeUsageLimitError") || text.includes("FreeTierError")) {
+          log?.info?.("OPENCODE", "HTTP wire rejected by free-tier gate (429/403), falling back to host CLI engine");
+          const rawModel = baseModelId(model || body?.model);
+          const targetModel = `opencode/${rawModel}`;
+          return await executeOpencodeCli({
+            opencodeBin,
+            targetModel,
+            promptText,
+            body,
+            proxyOptions: effectiveProxyOptions,
+            signal,
+            log,
+            rawModel,
+            providerTag: "OPENCODE",
+          });
+        }
+      } catch {
+        /* fail open */
+      }
+    }
+
+    return wireRes;
   }
 
   // Free tier moved from /zen/v1 to /inference/v1 (OpenCode v2); /zen/v1 now

@@ -866,7 +866,8 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const valid = !!(data && data.user);
         return { valid, error: valid ? null : "Session expired — re-paste cookie" };
       }
-      case "opencode": {
+      case "opencode":
+      case "opencode-v2": {
         // #5149: the free lane has no secret to validate (it sends "Bearer public"),
         // and this probe used the v1 "opencode/1.18.x" fingerprint that upstream
         // rejects with 403 FreeTierError since 2026-10-14 (see executors/opencode.js).

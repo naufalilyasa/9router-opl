@@ -359,6 +359,23 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (result.success) return result.response;
 
+    // OpenCode free quota is tracked per session id: a 429 FreeUsageLimitError
+    // means this session window is spent, so burn the canonical session and let
+    // the retry re-enter with a fresh one instead of hammering the same spent session.
+    if ((provider === "opencode" || provider === "opencode-v2") && result.status === 429
+        && /free\s*usage\s*limit/i.test(result.error || "")) {
+      try {
+        if (provider === "opencode-v2") {
+          const { rotateOpencodeV2Session } = await import("open-sse/executors/opencode-v2.js");
+          rotateOpencodeV2Session(refreshedCredentials);
+        } else {
+          const { rotateOpencodeSession } = await import("open-sse/executors/opencode.js");
+          rotateOpencodeSession(refreshedCredentials);
+        }
+      } catch { /* fail open */ }
+      log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} SESSION ROTATED (free quota spent) → NEXT`);
+    }
+
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
     let quotaResetMs = null;
     let resetsAtMs = result.resetsAtMs;

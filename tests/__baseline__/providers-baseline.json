@@ -848,6 +848,15 @@
     },
     "format": "openai"
   },
+  "opencode-v2": {
+    "baseUrl": "https://opencode.ai",
+    "timeoutMs": 45000,
+    "headers": {
+      "x-opencode-client": "cli"
+    },
+    "noAuth": true,
+    "format": "openai"
+  },
   "openrouter": {
     "baseUrl": "https://openrouter.ai/api/v1/chat/completions",
     "thinkingFormat": "openai",
