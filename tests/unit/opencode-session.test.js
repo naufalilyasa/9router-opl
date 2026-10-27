@@ -87,21 +87,28 @@ describe("OpenCode Free Session ID Format", () => {
     expect(counterOf(generateZenSessionId(1_700_000_000_000))).toBe(1);
   });
 
-  // Upstream also decodes the prefix timestamp and answers 429 when it is in
-  // the future or older than the free-tier window (~60d). A digest-derived
-  // time is effectively uniform over 2^36 ms, so most ids were rejected.
-  it("mints translated sessions with the current time", () => {
-    const PREFIX_MASK = (1n << 48n) - 1n;
-    const MOD = 2 ** 36;
-    const timeOf = (id) => Number((~BigInt(`0x${id.slice(4, 16)}`) & PREFIX_MASK) >> 12n);
-    const circularDistance = (a, b) => Math.min((a - b + MOD) % MOD, (b - a + MOD) % MOD);
-
+  // Upstream also decodes the prefix timestamp and refuses a session minted in
+  // the future or before the free-tier window (live probes 2026-10-26: a
+  // Date.now() session passed 10/10, digest-derived ones 1/10).
+  it("mints translated sessions at the current time instead of from a digest", () => {
+    // The 48-bit prefix carries 36 bits of milliseconds plus a 12-bit counter,
+    // so the decoded time is the mint time modulo 2^36.
+    const TIME_MASK = (1n << 36n) - 1n;
+    const timeOf = (id) => Number((~BigInt(`0x${id.slice(4, 16)}`) & ((1n << 48n) - 1n)) >> 12n);
     const before = Date.now();
-    const session = translateSessionId("timestamp-regression", "claude");
+    const translated = translateSessionId(`fresh-${before}`, "claude");
     const after = Date.now();
 
-    const decoded = timeOf(session);
-    expect(circularDistance(decoded, before % MOD)).toBeLessThanOrEqual(after - before + 1000);
+    expect(timeOf(translated)).toBeGreaterThanOrEqual(Number(BigInt(before) & TIME_MASK));
+    expect(timeOf(translated)).toBeLessThanOrEqual(Number(BigInt(after) & TIME_MASK));
+  });
+
+  it("reuses the memoized session for one conversation", () => {
+    const raw = "claude:memoized-conversation";
+    const first = translateSessionId(raw, "claude");
+    expect(translateSessionId(raw, "claude")).toBe(first);
+    // A different conversation still gets its own session.
+    expect(translateSessionId(`${raw}-other`, "claude")).not.toBe(first);
   });
 
   it("preserves already-valid OpenCode sessions without re-hashing", () => {

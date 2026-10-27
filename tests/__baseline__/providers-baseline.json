@@ -844,17 +844,9 @@
     "quirks": {
       "forceAutoToolChoiceModels": [
         "muse-spark-1.3-contributor-free"
-      ]
+      ],
+      "reasoningAliasFields": true
     },
-    "format": "openai"
-  },
-  "opencode-v2": {
-    "baseUrl": "https://opencode.ai",
-    "timeoutMs": 45000,
-    "headers": {
-      "x-opencode-client": "cli"
-    },
-    "noAuth": true,
     "format": "openai"
   },
   "openrouter": {
@@ -895,6 +887,11 @@
     "baseUrl": "https://api.siliconflow.com/v1/chat/completions",
     "validateUrl": "https://api.siliconflow.com/v1/models",
     "thinkingFormat": "openai",
+    "format": "openai"
+  },
+  "sensenova": {
+    "baseUrl": "https://token.sensenova.cn/v1/chat/completions",
+    "validateUrl": "https://token.sensenova.cn/v1/models",
     "format": "openai"
   },
   "together": {
@@ -1282,9 +1279,27 @@
     "format": "openai",
     "authType": "cookie"
   },
-  "sensenova": {
-    "baseUrl": "https://token.sensenova.cn/v1/chat/completions",
-    "validateUrl": "https://token.sensenova.cn/v1/models",
+  "runcrate": {
+    "baseUrl": "https://api.runcrate.ai/v1/chat/completions",
+    "validateUrl": "https://www.runcrate.ai/api/v1/billing/balance",
+    "format": "openai"
+  },
+  "opencode-v2": {
+    "baseUrl": "https://opencode.ai",
+    "timeoutMs": 45000,
+    "headers": {
+      "x-opencode-client": "cli"
+    },
+    "forceStream": true,
+    "noAuth": true,
+    "reasoningInject": {
+      "scope": "all"
+    },
+    "quirks": {
+      "forceAutoToolChoiceModels": [
+        "muse-spark-1.3-contributor-free"
+      ]
+    },
     "format": "openai"
   }
 }

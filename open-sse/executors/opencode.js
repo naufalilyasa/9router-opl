@@ -7,6 +7,7 @@ import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { isMuseSparkModel } from "../providers/models/helpers.js";
 import { applyFingerprintTools } from "../utils/opencodeFingerprint.js";
+import { opencodeTlsFetch } from "../services/opencodeTlsClient.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import {
   findOpencodeBinary,
@@ -75,12 +76,12 @@ export function generateSessionId(timestamp = Date.now()) {
   return `ses_${descendingTimeHex(timestamp, counter)}${unstableRandom()}`;
 }
 
-// Upstream decodes the prefix timestamp and rejects sessions whose time is in
-// the future or older than the free-tier window (live probes: -60d passes,
-// -100d and +30d answer 429). A digest-derived time is effectively random over
-// 2^36 ms, so most translated ids were rejected even though the format matched.
-// Mint with the current time and memoize per conversation/tool so a
-// conversation keeps one stable, valid session for the cached TTL.
+// Upstream decodes the prefix timestamp and refuses sessions whose time is in
+// the future or older than the free-tier window (live probes 2026-10-26: a
+// Date.now() session passed 10/10 while digest-derived ones passed 1/10). A
+// digest is uniform over 2^36 ms, so most translated ids were refused even
+// though their shape matched. Mint with the current time and memoize per
+// conversation so a conversation keeps one stable, valid session.
 const translatedOpencodeSessions = new Map();
 const MAX_TRANSLATED_SESSIONS = 5000;
 const translatedSessionCleanup = setInterval(() => {
@@ -419,6 +420,11 @@ export class OpenCodeExecutor extends BaseExecutor {
     return injectReasoningContent({ provider: this.provider, model, body });
   }
 
+  // The free gate keys on the TLS ClientHello, so a native Node fetch is refused
+  // no matter how faithful the body is. Route through the impersonating client
+  // and keep proxy handling on the existing path (proxyAwareFetch delegates to
+  // `directFetch` when no proxy is configured). Fail-open: without wreq-js the
+  // request still goes out on native fetch instead of erroring here.
   async execute(args) {
     const { model, body, proxyOptions, signal, log } = args;
     const effectiveProxyOptions = (proxyOptions?.connectionProxyEnabled && proxyOptions?.connectionProxyUrl)
@@ -449,10 +455,16 @@ export class OpenCodeExecutor extends BaseExecutor {
       }
     }
 
+    const credentials = this.prepareRequestCredentials(args);
     const wireRes = await super.execute({
       ...args,
       proxyOptions: effectiveProxyOptions,
-      credentials: this.prepareRequestCredentials(args),
+      credentials,
+      directFetch: (url, options) => opencodeTlsFetch(url, {
+        method: options.method,
+        headers: options.headers,
+        body: options.body,
+      }, { signal: options.signal }),
     });
 
     if ((wireRes?.response?.status === 429 || wireRes?.response?.status === 403) && opencodeBin && promptText) {
