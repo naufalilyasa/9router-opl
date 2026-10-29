@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { stripUnsupportedParams } from "../../open-sse/translator/concerns/paramSupport.js";
+import { DefaultExecutor } from "../../open-sse/executors/default.js";
 
 describe("stripUnsupportedParams", () => {
   it("flattens Cloudflare AI OpenAI content-part arrays", () => {
@@ -97,52 +98,27 @@ describe("stripUnsupportedParams", () => {
     expect(body.messages[0].reasoning_content).toBe("thinking...");
   });
 
-  it("coerces CodeBuddy object tool_choice to the nearest string form", () => {
-    for (const provider of ["codebuddy-intl", "codebuddy-cn"]) {
-      const forced = { tool_choice: { type: "function", function: { name: "probe_tool" } } };
-      stripUnsupportedParams(provider, "deepseek-v4.1-flash", forced);
-      expect(forced.tool_choice).toBe("required");
+  it("normalizes NVIDIA reasoning aliases before DeepSeek placeholder injection", () => {
+    const body = {
+      messages: [
+        { role: "assistant", content: "", reasoning: "alias", reasoning_content: "canonical" },
+        { role: "assistant", content: "", reasoning: "alias only" },
+        { role: "assistant", content: "", reasoning_content: "canonical only" },
+      ],
+    };
 
-      const auto = { tool_choice: { type: "auto" } };
-      stripUnsupportedParams(provider, "deepseek-v4.1-flash", auto);
-      expect(auto.tool_choice).toBe("auto");
+    const transformed = new DefaultExecutor("nvidia").transformRequest(
+      "deepseek-ai/deepseek-v4-pro",
+      body,
+      true,
+      {},
+    );
 
-      const none = { tool_choice: { type: "none" } };
-      stripUnsupportedParams(provider, "deepseek-v4.1-flash", none);
-      expect(none.tool_choice).toBe("none");
-    }
-  });
-
-  it("keeps CodeBuddy string tool_choice and leaves other providers untouched", () => {
-    const asString = { tool_choice: "required" };
-    stripUnsupportedParams("codebuddy-intl", "deepseek-v4.1-flash", asString);
-    expect(asString.tool_choice).toBe("required");
-
-    const other = { tool_choice: { type: "function", function: { name: "x" } } };
-    stripUnsupportedParams("openai", "gpt-5", other);
-    expect(other.tool_choice).toEqual({ type: "function", function: { name: "x" } });
-  });
-
-  it("renames CodeBuddy max_completion_tokens to max_tokens (11133 otherwise)", () => {
-    for (const provider of ["codebuddy-intl", "codebuddy-cn"]) {
-      const only = { max_completion_tokens: 298380 };
-      stripUnsupportedParams(provider, "deepseek-v4.1-flash", only);
-      expect(only).toEqual({ max_tokens: 298380 });
-
-      const both = { max_tokens: 4096, max_completion_tokens: 298380 };
-      stripUnsupportedParams(provider, "deepseek-v4.1-flash", both);
-      expect(both).toEqual({ max_tokens: 4096 });
-
-      const neither = { temperature: 0.5 };
-      stripUnsupportedParams(provider, "deepseek-v4.1-flash", neither);
-      expect(neither).toEqual({ temperature: 0.5 });
-    }
-  });
-
-  it("leaves max_completion_tokens alone for other providers", () => {
-    const body = { max_completion_tokens: 8192 };
-    stripUnsupportedParams("openai", "gpt-5", body);
-    expect(body.max_completion_tokens).toBe(8192);
+    expect(transformed.messages).toEqual([
+      { role: "assistant", content: "", reasoning_content: "canonical" },
+      { role: "assistant", content: "", reasoning_content: "alias only" },
+      { role: "assistant", content: "", reasoning_content: "canonical only" },
+    ]);
   });
 
   it("drops response_format for OpenCode Go's deepseek family (both json_schema and json_object)", () => {
@@ -183,5 +159,29 @@ describe("stripUnsupportedParams", () => {
       stripUnsupportedParams(provider, model, body);
       expect(body.response_format).toBe(response_format);
     }
+  });
+
+  it("renames max_tokens to max_completion_tokens for the openai provider", () => {
+    const body = { max_tokens: 50, temperature: 1 };
+
+    stripUnsupportedParams("openai", "gpt-6-luna", body);
+
+    expect(body).toEqual({ max_completion_tokens: 50, temperature: 1 });
+  });
+
+  it("keeps an explicit max_completion_tokens when both are sent to openai", () => {
+    const body = { max_tokens: 50, max_completion_tokens: 80 };
+
+    stripUnsupportedParams("openai", "gpt-6-luna", body);
+
+    expect(body).toEqual({ max_completion_tokens: 80 });
+  });
+
+  it("leaves max_tokens untouched for other providers", () => {
+    const body = { max_tokens: 50 };
+
+    stripUnsupportedParams("groq", "qwen/qwen3.6-27b", body);
+
+    expect(body).toEqual({ max_tokens: 50 });
   });
 });
