@@ -138,6 +138,11 @@ async function flushToDatabase() {
   } finally {
     isFlushing = false;
   }
+
+  try {
+    const { statsEmitter } = await import("./usageRepo.js");
+    statsEmitter.emit("update");
+  } catch {}
 }
 
 export async function saveRequestDetail(detail) {
@@ -155,11 +160,16 @@ export async function saveRequestDetail(detail) {
     flushTimer = setTimeout(() => {
       flushTimer = null;
       flushToDatabase().catch(() => {});
-    }, config.flushIntervalMs);
+    }, Math.min(config.flushIntervalMs, 1000));
   }
 }
 
 export async function getRequestDetails(filter = {}) {
+  if (writeBuffer.length > 0) {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    await flushToDatabase();
+  }
+
   const db = await getAdapter();
   const conds = [];
   const params = [];
@@ -199,6 +209,10 @@ export async function getDistinctProviders() {
 }
 
 export async function getRequestDetailById(id) {
+  if (writeBuffer.length > 0) {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    await flushToDatabase();
+  }
   const db = await getAdapter();
   const row = db.get(`SELECT data FROM requestDetails WHERE id = ?`, [id]);
   return row ? parseJson(row.data, null) : null;

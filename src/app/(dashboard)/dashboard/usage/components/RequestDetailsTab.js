@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
@@ -110,6 +110,7 @@ export default function RequestDetailsTab() {
   const [loading, setLoading] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [drawerLoading, setDrawerLoading] = useState(false);
   const [providers, setProviders] = useState([]);
   const [providerNameCache, setProviderNameCache] = useState(null);
   const [filters, setFilters] = useState({
@@ -117,6 +118,7 @@ export default function RequestDetailsTab() {
     startDate: "",
     endDate: ""
   });
+  const refreshTimerRef = useRef(null);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -131,8 +133,8 @@ export default function RequestDetailsTab() {
     }
   }, []);
 
-  const fetchDetails = useCallback(async () => {
-    setLoading(true);
+  const fetchDetails = useCallback(async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
     try {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
@@ -150,21 +152,61 @@ export default function RequestDetailsTab() {
     } catch (error) {
       console.error("Failed to fetch request details:", error);
     } finally {
-      setLoading(false);
+      if (!isSilent) setLoading(false);
     }
   }, [pagination.page, pagination.pageSize, filters]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchProviders();
   }, [fetchProviders]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchDetails();
   }, [fetchDetails]);
 
-  const handleViewDetail = (detail) => {
+  // Real-time updates via SSE when on the first page
+  useEffect(() => {
+    const es = new EventSource("/api/usage/stream");
+
+    es.onmessage = () => {
+      // Auto-refresh the first page silently when new usage arrives
+      if (pagination.page === 1) {
+        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = setTimeout(() => {
+          fetchDetails(true);
+        }, 500);
+      }
+    };
+
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      es.close();
+    };
+  }, [pagination.page, fetchDetails]);
+
+  const handleViewDetail = async (detail) => {
     setSelectedDetail(detail);
     setIsDrawerOpen(true);
+
+    // If payloads were redacted in the list response, fetch full unredacted detail for inspection
+    if (detail.id && (detail.request?.redacted || detail.response?.redacted)) {
+      setDrawerLoading(true);
+      try {
+        const res = await fetch(`/api/usage/request-details/${encodeURIComponent(detail.id)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.detail) {
+            setSelectedDetail(json.detail);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load full request detail:", err);
+      } finally {
+        setDrawerLoading(false);
+      }
+    }
   };
 
   const handlePageChange = (newPage) => {
@@ -235,19 +277,46 @@ export default function RequestDetailsTab() {
           
           <div className="flex min-w-0 flex-col gap-2 sm:col-span-2 lg:col-span-1">
             <span className="hidden text-sm font-medium text-text-main opacity-0 lg:block" aria-hidden="true">Clear</span>
-            <Button 
-              variant="ghost" 
-              onClick={handleClearFilters}
-              disabled={!filters.provider && !filters.startDate && !filters.endDate}
-              className="w-full"
-            >
-              Clear Filters
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="ghost" 
+                onClick={handleClearFilters}
+                disabled={!filters.provider && !filters.startDate && !filters.endDate}
+                className="w-full"
+              >
+                Clear
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => fetchDetails(false)}
+                disabled={loading}
+                className="shrink-0 px-3"
+                title="Refresh table"
+              >
+                <span className={cn("material-symbols-outlined text-[18px]", loading && "animate-spin")}>refresh</span>
+              </Button>
+            </div>
           </div>
         </div>
       </Card>
 
       <Card padding="none">
+        <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Requests Log</span>
+            {pagination.page === 1 && !filters.startDate && !filters.endDate && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[11px] font-medium text-green-600 dark:text-green-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                Live
+              </span>
+            )}
+          </div>
+          {pagination.totalItems > 0 && (
+            <span className="text-xs text-text-muted">
+              Total {pagination.totalItems.toLocaleString()} requests
+            </span>
+          )}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[880px]">
             <thead>
@@ -455,53 +524,60 @@ export default function RequestDetailsTab() {
               </div>
             )}
 
-            <div className="space-y-4">
-              <CollapsibleSection title="1. Client Request (Input)" defaultOpen={true} icon="input">
-                <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
-                  {JSON.stringify(selectedDetail.request, null, 2)}
-                </pre>
-              </CollapsibleSection>
-
-              {selectedDetail.providerRequest && (
-                <CollapsibleSection title="2. Provider Request (Translated)" icon="translate">
+            {drawerLoading ? (
+              <div className="flex items-center justify-center p-8 text-text-muted gap-2">
+                <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
+                <span className="text-sm">Loading full request details...</span>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <CollapsibleSection title="1. Client Request (Input)" defaultOpen={true} icon="input">
                   <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
-                    {JSON.stringify(selectedDetail.providerRequest, null, 2)}
+                    {JSON.stringify(selectedDetail.request, null, 2)}
                   </pre>
                 </CollapsibleSection>
-              )}
 
-              {selectedDetail.providerResponse && (
-                <CollapsibleSection title="3. Provider Response (Raw)" icon="data_object">
-                  <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
-                    {typeof selectedDetail.providerResponse === 'object'
-                      ? JSON.stringify(selectedDetail.providerResponse, null, 2)
-                      : selectedDetail.providerResponse
-                    }
-                  </pre>
-                </CollapsibleSection>
-              )}
-              
-              <CollapsibleSection title="4. Client Response (Final)" defaultOpen={true} icon="output">
-                {selectedDetail.response?.thinking && (
-                  <div className="mb-4">
-                    <h4 className="font-semibold text-text-main mb-2 flex items-center gap-2 text-xs uppercase tracking-wide opacity-70">
-                      <span className="material-symbols-outlined text-[16px]">psychology</span>
-                      Thinking Process
-                    </h4>
-                    <pre className="max-h-[200px] max-w-full overflow-auto rounded-lg border border-amber-200 bg-amber-50 p-3 font-mono text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100 sm:p-4">
-                      {selectedDetail.response.thinking}
+                {selectedDetail.providerRequest && (
+                  <CollapsibleSection title="2. Provider Request (Translated)" icon="translate">
+                    <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
+                      {JSON.stringify(selectedDetail.providerRequest, null, 2)}
                     </pre>
-                  </div>
+                  </CollapsibleSection>
+                )}
+
+                {selectedDetail.providerResponse && (
+                  <CollapsibleSection title="3. Provider Response (Raw)" icon="data_object">
+                    <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
+                      {typeof selectedDetail.providerResponse === 'object'
+                        ? JSON.stringify(selectedDetail.providerResponse, null, 2)
+                        : selectedDetail.providerResponse
+                      }
+                    </pre>
+                  </CollapsibleSection>
                 )}
                 
-                <h4 className="font-semibold text-text-main mb-2 text-xs uppercase tracking-wide opacity-70">
-                  Content
-                </h4>
-                <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
-                  {selectedDetail.response?.content || "[No content]"}
-                </pre>
-              </CollapsibleSection>
-            </div>
+                <CollapsibleSection title="4. Client Response (Final)" defaultOpen={true} icon="output">
+                  {selectedDetail.response?.thinking && (
+                    <div className="mb-4">
+                      <h4 className="font-semibold text-text-main mb-2 flex items-center gap-2 text-xs uppercase tracking-wide opacity-70">
+                        <span className="material-symbols-outlined text-[16px]">psychology</span>
+                        Thinking Process
+                      </h4>
+                      <pre className="max-h-[200px] max-w-full overflow-auto rounded-lg border border-amber-200 bg-amber-50 p-3 font-mono text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100 sm:p-4">
+                        {selectedDetail.response.thinking}
+                      </pre>
+                    </div>
+                  )}
+                  
+                  <h4 className="font-semibold text-text-main mb-2 text-xs uppercase tracking-wide opacity-70">
+                    Content
+                  </h4>
+                  <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
+                    {selectedDetail.response?.content || "[No content]"}
+                  </pre>
+                </CollapsibleSection>
+              </div>
+            )}
           </div>
         )}
       </Drawer>
