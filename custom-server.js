@@ -1,5 +1,13 @@
 const http = require("http");
 
+// Guard against unhandled rejections/exceptions from aborted streams, timeouts, etc.
+process.on("unhandledRejection", (reason) => {
+  console.error("[9Router] Unhandled rejection:", reason && reason.message ? reason.message : reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[9Router] Uncaught exception:", err && err.message ? err.message : err);
+});
+
 
 // Intercept fetch to sanitize InferX upstream requests
 if (typeof globalThis.fetch === "function") {
