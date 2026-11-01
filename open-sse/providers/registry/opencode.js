@@ -11,14 +11,14 @@ export default {
     textIcon: "OC",
   },
   category: "free",
-  noAuth: true,
+  noAuth: false, // BOZ: disabled 2026-10-24 — was true, kept oc/* alive after connection delete
   transport: {
     baseUrl: "https://opencode.ai",
     headers: {
       "x-opencode-client": "desktop",
     },
     forceStream: true,
-    noAuth: true,
+    noAuth: false,
     // Zen reasoning models reject multi-turn history whose assistant messages
     // carry no reasoning_content (400 missing_required_parameter), and the
     // response pipeline strips the field before it reaches the client, so the

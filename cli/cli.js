@@ -194,8 +194,8 @@ for (let i = 0; i < args.length; i++) {
   // --help/-h and --version/-v are handled by the early-exit loop above.
 }
 
-// Auto-relaunch after update: detached process has no TTY → fallback to tray
-if (skipUpdate && !trayMode && !process.stdin.isTTY) {
+// Detached, nohup, or background process has no TTY → fallback to tray/daemon mode
+if (!trayMode && !process.stdin.isTTY) {
   trayMode = true;
   process.env.TRAY_MODE = "1";
 }
