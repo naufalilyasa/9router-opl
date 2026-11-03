@@ -1,37 +1,41 @@
 export default {
   id: "gemini-web",
-  priority: 220,
+  priority: 141,
   alias: "gemini-web",
   aliases: [
     "gweb",
+    "gemini-cookie",
   ],
-  uiAlias: "gemini-web",
+  uiAlias: "gweb",
   display: {
     name: "Gemini Web",
-    icon: "auto_awesome",
-    color: "#4285F4",
+    icon: "bolt",
+    color: "#1C7DFF",
     textIcon: "GW",
     website: "https://gemini.google.com",
+    notice: {
+      signupUrl: "https://gemini.google.com",
+      apiKeyUrl: "https://gemini.google.com",
+      text: "Gemini free web chat (Gemini 3.8 Flash, 3.5 Flash Lite, 3.1 Pro, 4 Argon, and thinking variants). Open gemini.google.com, log in, then copy the \"__Secure-1PSID\" cookie (and optional \"__Secure-1PSIDTS\") from DevTools → Application → Cookies → gemini.google.com and paste it here. For best session longevity, exporting from Firefox is recommended.",
+    },
   },
   category: "webCookie",
   authType: "cookie",
-  // No "llm": chat models stay API-reachable but are hidden from LLM lists —
-  // this provider is surfaced through the image media pages only.
-  serviceKinds: ["image"],
-  authHint: "Paste your __Secure-1PSID (and __Secure-1PSIDTS) cookie value(s) from gemini.google.com",
+  authHint: "Paste your __Secure-1PSID cookie (plus __Secure-1PSIDTS) from gemini.google.com (DevTools -> Application -> Cookies). Best exported from Firefox: Chrome binds the session to the device, so a Chrome-exported cookie typically dies within 30 minutes.",
   transport: {
     baseUrl: "https://gemini.google.com/app",
-    format: "openai",
+    format: "gemini-web",
     authType: "cookie",
   },
-  // `supportsReasoning` is omitted deliberately: the executor drives the
-  // gemini.google.com web UI by typing a prompt, so it has no thinking-budget
-  // control to set and never surfaces `reasoning_content`. Tool calling is
-  // prompt-emulated only (translator/webTools.js), never native.
   models: [
+    { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+    { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash Lite" },
     { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
-    { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash" },
-    { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite" },
-    { id: "gemini-image", name: "Gemini Image (web)", params: ["n", "size"], kind: "image" },
+    { id: "gemini-4-argon", name: "Gemini 4 Argon" },
+    { id: "gemini-3.8-flash-thinking", name: "Gemini 3.8 Flash Thinking" },
+    { id: "gemini-3.5-flash-lite-thinking", name: "Gemini 3.5 Flash Lite Thinking" },
+    { id: "gemini-3.1-pro-thinking", name: "Gemini 3.1 Pro Thinking" },
+    { id: "gemini-4-argon-thinking", name: "Gemini 4 Argon Thinking" },
   ],
+  passthroughModels: true,
 };
