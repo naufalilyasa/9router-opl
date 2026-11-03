@@ -44,6 +44,13 @@ const PATTERN_THINKING = [
   // Gemini 4 (Argon) rejects "minimal" with 400 — LOW is the floor; cannot disable thinking.
   { pattern: "*gemini-4*", levels: ["low", "medium", "high"] },
   { pattern: "*abliterat*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
+  // free.ai.id `prem/*` lane takes the full OpenAI enum verbatim, with two per-model
+  // exceptions measured live: muse-spark rejects "none" (its 400 lists
+  // [minimal..max]) and deepseek-v4.1-flash-1017 rejects "minimal". Everything else
+  // answers 200 for all seven values.
+  { provider: "openai-compatible-chat-freeai", pattern: "*muse-spark-1.3-contributor*", levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
+  { provider: "openai-compatible-chat-freeai", pattern: "*deepseek-v4.1-flash-1017*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
+  { provider: "openai-compatible-chat-freeai", pattern: "*", levels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
   { pattern: "*claude*4.6*", levels: CLAUDE_NO_XHIGH },
   { pattern: "*claude*4-6*", levels: CLAUDE_NO_XHIGH },
   { provider: "codex", pattern: "*gpt-6*", levels: CODEX_GPT_5_6_LEVELS },

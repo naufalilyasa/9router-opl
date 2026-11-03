@@ -490,6 +490,40 @@ PROVIDER_CAPABILITIES.devin = PROVIDER_CAPABILITIES["devin-cli"];
 // The global mcode site serves the same catalog — share the capability table.
 PROVIDER_CAPABILITIES["minimax-code-global"] = PROVIDER_CAPABILITIES["minimax-code"];
 
+// free.ai.id's `prem/*` lane — an OpenAI-compatible gateway that renames its upstream
+// models (`zai-org/GLM-5.3-Flash`, `deepseek-ai/DeepSeek-V4-Flash-0731`) under a `prem/`
+// prefix and takes the plain OpenAI `reasoning_effort` enum. Scoped to the node id so
+// the global *glm-5.3-flash* / *deepseek* patterns keep describing z.ai and DeepSeek
+// themselves (zai `thinking` object, deepseek level collapsing), which this lane rejects.
+// Everything below was probed live on 2026-11-03 against https://free.ai.id/v1:
+//   • reasoning_effort none|minimal|low|medium|high|xhigh|max → 200, except
+//     muse-spark (rejects "none": "Supported values: [minimal, low, medium, high, xhigh, max]")
+//     and deepseek-v4.1-flash-1017 (rejects "minimal").
+//   • Reasoning text arrives inline in `content` (deepseek-v4-flash-0731 wraps it in
+//     literal <think>…</think> tags); no `reasoning_content` field is ever returned,
+//     so thinkingFormat stays "openai" and nothing downstream expects a split field.
+//   • The gateway publishes context 1000000 for all five models, but its own 400 text
+//     enforces ~200k for deepseek-v4-flash-0731 and glm-5.3-flash ("this gateway
+//     currently accepts up to about 200000 tokens"). Those two publish the enforced
+//     window; the other three really do accept 1M (verified with a 200k-word prompt).
+//   • Vision was checked with a 1x1 PNG. deepseek-v4.1-flash-1017 answered "Red" and
+//     step-5-preview described the pixels, so both are vision. glm-5.3-flash and
+//     deepseek-v4-flash-0731 hard-fail with 400 `unsupported value "image_url"` despite
+//     the gateway's /v1/models advertising vision:true. muse-spark accepts the image
+//     block but answered the colour probe wrong ("white"), so it is not marked vision.
+//   • Video is real on muse-spark (identified Big Buck Bunny) and step-5-preview
+//     (described frames); the other three reject `video_url` with 400.
+//   • deepseek-v4.1-flash-1017 intermittently returns `Billing: insufficient_funds`
+//     on some upstream shards (2 of 3 retries succeed) — a gateway-side defect, not a
+//     key problem, so it is registered as-is and left to the fallback strategy.
+PROVIDER_CAPABILITIES["openai-compatible-chat-freeai"] = {
+  "prem/deepseek-v4.1-flash-1017": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 900000 },
+  "prem/muse-spark-1.3-contributor": { videoInput: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1048576, maxOutput: 1000000 },
+  "prem/deepseek-v4-flash-0731": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 200000, maxOutput: 200000 },
+  "prem/step-5-preview": { vision: true, videoInput: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 1048576 },
+  "prem/glm-5.3-flash": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 200000, maxOutput: 200000 },
+};
+
 /**
  * Pattern fallback — glob (* = wildcard), matched case-insensitively and
  * anchored (^...$) so a pattern must match the full model id. ORDER MATTERS:
@@ -684,6 +718,12 @@ export const PATTERN_CAPABILITIES = [
 
   // ── Others ───────────────────────────────────────────────────────
   { pattern: "*hunyuan*",       caps: { reasoning: true, thinkingFormat: "hunyuan", contextWindow: 262144, maxOutput: 262144 } },
+  // free.ai.id's `prem/*` lane is NOT z.ai/DeepSeek-native: it takes the plain OpenAI
+  // `reasoning_effort` enum (probed live 2026-11-03, none..max all 200) and inlines the
+  // reasoning text into `content` instead of returning a separate field, so the zai and
+  // deepseek shapes the generic patterns below pick would send the wrong wire. The
+  // gateway advertises a 1M window for every model but its own 400 text enforces ~200k
+  // on deepseek-v4-flash-0731 and glm-5.3-flash, so those two publish the enforced number.
   { pattern: "hy3*",            caps: { reasoning: true, thinkingFormat: "hunyuan", contextWindow: 262144, maxOutput: 262144 } },
   { pattern: "*step-*",         caps: { reasoning: true, thinkingFormat: "step", contextWindow: 128000 } },
   { pattern: "*nemotron*",      caps: { reasoning: true, contextWindow: 128000 } },
