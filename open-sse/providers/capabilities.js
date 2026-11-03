@@ -676,6 +676,12 @@ export const PATTERN_CAPABILITIES = [
 
   // ── OpenCode Free Muse Spark (multimodal text+image; OpenAI Responses reasoning supports up to xhigh) ─
   { pattern: "*muse*spark*",    caps: { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 } },
+  // ── Abliteration (vision + reasoning + OpenAI thinking format) ───
+  { pattern: "*abliterated-model-large-flash*", caps: { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 262144 } },
+  { pattern: "*abliterated-model-large*",       caps: { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 999990 } },
+  { pattern: "*abliterated-model*",             caps: { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 262144, maxOutput: 262134 } },
+  { pattern: "*abliterat*",                     caps: { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true } },
+
   // ── Others ───────────────────────────────────────────────────────
   { pattern: "*hunyuan*",       caps: { reasoning: true, thinkingFormat: "hunyuan", contextWindow: 262144, maxOutput: 262144 } },
   { pattern: "hy3*",            caps: { reasoning: true, thinkingFormat: "hunyuan", contextWindow: 262144, maxOutput: 262144 } },

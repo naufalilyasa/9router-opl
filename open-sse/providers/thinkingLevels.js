@@ -43,6 +43,7 @@ const CLAUDE_NO_XHIGH = ["none", "low", "medium", "high", "max"];
 const PATTERN_THINKING = [
   // Gemini 4 (Argon) rejects "minimal" with 400 — LOW is the floor; cannot disable thinking.
   { pattern: "*gemini-4*", levels: ["low", "medium", "high"] },
+  { pattern: "*abliterat*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
   { pattern: "*claude*4.6*", levels: CLAUDE_NO_XHIGH },
   { pattern: "*claude*4-6*", levels: CLAUDE_NO_XHIGH },
   { provider: "codex", pattern: "*gpt-6*", levels: CODEX_GPT_5_6_LEVELS },
