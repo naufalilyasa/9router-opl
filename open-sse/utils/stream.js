@@ -177,6 +177,11 @@ export function createSSEStream(options = {}) {
 
         // Passthrough mode: normalize and forward
         if (mode === STREAM_MODE.PASSTHROUGH) {
+          // Blank lines are re-synthesized below (every forwarded line now carries
+          // its own terminator), so forwarding the upstream separator as well
+          // would emit stray blank lines.
+          if (!trimmed) continue;
+
           let output;
           let injectedUsage = false;
           let responsesTerminal = false;
@@ -281,16 +286,16 @@ export function createSSEStream(options = {}) {
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
                 const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
-                output = `data: ${JSON.stringify(parsed)}\n`;
+                output = `data: ${JSON.stringify(parsed)}\n\n`;
                 usage = estimated;
                 injectedUsage = true;
               } else if (isFinishChunk && usage) {
                 const buffered = addBufferToUsage(usage);
                 parsed.usage = filterUsageForFormat(buffered, FORMATS.OPENAI);
-                output = `data: ${JSON.stringify(parsed)}\n`;
+                output = `data: ${JSON.stringify(parsed)}\n\n`;
                 injectedUsage = true;
               } else if (idFixed || fieldsInjected || toolCallIdFixed || toolNameRestored) {
-                output = `data: ${JSON.stringify(parsed)}\n`;
+                output = `data: ${JSON.stringify(parsed)}\n\n`;
                 injectedUsage = true;
               }
             } catch {
@@ -303,14 +308,22 @@ export function createSSEStream(options = {}) {
 
           if (!injectedUsage) {
             if (line.startsWith("data:") && !line.startsWith("data: ")) {
-              output = "data: " + line.slice(5) + "\n";
+              output = "data: " + line.slice(5);
             } else {
-              output = line + "\n";
+              output = line;
             }
+            // Every forwarded data line must end with a blank line so a strict SSE
+            // client sees one event per chunk even when the upstream separated
+            // consecutive data lines with a single \n. Non-data lines (event:,
+            // id:, comments) keep their own framing.
+            if (output.startsWith("data:")) output += "\n\n";
+            else output += "\n";
           }
 
           reqLogger?.appendConvertedChunk?.(output);
           controller.enqueue(sharedEncoder.encode(output));
+          // Mark the sentinel as delivered so flush() does not append a second one.
+          if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") streamDoneSent = true;
           // Responses clients (codex CLI) close on response.completed instead of [DONE]
           if (responsesTerminal) finalizeStream();
           continue;
