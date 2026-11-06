@@ -41,6 +41,12 @@ const CLAUDE_NO_XHIGH = ["none", "low", "medium", "high", "max"];
 
 // Model-name pattern overrides (glob, first match wins) — more precise than format default.
 const PATTERN_THINKING = [
+  // gemini-web is the gemini.google.com web protocol, which carries thinking as
+  // a BINARY flag (inner[80] = 1 normal | 2 extended). Every level below except
+  // "none" maps to that flag being ON, so the list exists to let the picker turn
+  // thinking off — the finer gradation is not on the wire. Must sit above the
+  // *gemini-4* glob (first-match-wins) or Argon would lose its "none".
+  { provider: "gemini-web", pattern: "*", levels: ["none", "low", "medium", "high"] },
   // Gemini 4 (Argon) rejects "minimal" with 400 — LOW is the floor; cannot disable thinking.
   { pattern: "*gemini-4*", levels: ["low", "medium", "high"] },
   { pattern: "*abliterat*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },

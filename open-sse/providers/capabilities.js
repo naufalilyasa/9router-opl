@@ -548,6 +548,34 @@ PROVIDER_CAPABILITIES["openai-compatible-chat-agentrouter"] = {
   "gpt-6.1-sol": { reasoning: true, thinkingFormat: "openai-responses", thinkingCanDisable: false, contextWindow: 900000, maxOutput: 1000000 },
 };
 
+// gemini-web talks to gemini.google.com/_/BardChatUi — the web protocol carries
+// thinking as a BINARY flag (inner[80] = 1 normal | 2 extended), not a level.
+// The executor reads exactly `reasoning_effort` / `thinking.type` /
+// `thinking_budget` / `budget_tokens` to decide that flag, so the capability
+// must keep one of those fields alive.
+//
+// thinkingFormat "gemini-level" (inherited from the *gemini-4* pattern) routes
+// through applyFormat's gemini-level case, which calls stripAll() — deleting
+// reasoning_effort/thinking — and then writes generationConfig.thinkingConfig,
+// which the executor never reads. Net effect: the client's effort vanished and
+// thinking silently fell back to whatever the model id implied.
+//
+// thinkingFormat "openai" keeps the signal: stripAll() clears the body, then
+// the openai case re-adds reasoning_effort. Every level other than "none" maps
+// to thinking ON (the wire has no finer granularity), and "none" maps to OFF.
+// thinkingCanDisable is therefore true here, unlike the API-backed Gemini
+// families where Argon rejects a "minimal" tier with a 400.
+PROVIDER_CAPABILITIES["gemini-web"] = {
+  "gemini-4-argon": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 65536 },
+  "gemini-4-argon-thinking": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 65536 },
+  "gemini-3.8-flash": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 65536 },
+  "gemini-3.8-flash-thinking": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 65536 },
+  "gemini-3.1-pro": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 65535 },
+  "gemini-3.1-pro-thinking": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 65535 },
+  "gemini-3.5-flash-lite": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 65536 },
+  "gemini-3.5-flash-lite-thinking": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 65536 },
+};
+
 /**
  * Pattern fallback — glob (* = wildcard), matched case-insensitively and
  * anchored (^...$) so a pattern must match the full model id. ORDER MATTERS:
