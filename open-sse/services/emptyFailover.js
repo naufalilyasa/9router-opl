@@ -22,7 +22,6 @@ import { toOpenAIFinish } from "../translator/concerns/finishReason.js";
 import { FORMATS } from "../translator/formats.js";
 import { EMPTY_PEEK_DEADLINE_MS } from "../config/runtimeConfig.js";
 import { parseSSELine } from "../utils/streamHelpers.js";
-
 // OpenAI chat content test. A chunk counts as content when it carries assistant output
 // the caller can consume: visible content, reasoning/thinking, or a real tool call.
 // delta.role alone still does not count because 9router emits {role:"assistant"} on the
@@ -46,6 +45,25 @@ export function deltaHasClientContent(delta) {
 // thinking, and tool calls are content. Finish reasons are reported in the hub (OpenAI)
 // vocabulary so isNoRetryFinish applies to every format.
 const nonEmptyString = (s) => typeof s === "string" && s.length > 0;
+
+// Pull the error message out of an in-stream error frame, if any. Some gateways
+// deliver failures as HTTP 200 + an error event inside the stream instead of a
+// real status (AgentRouter: data: {"error": "Your requests to ... exceeded token
+// rate limit"}). The peek must see these, or a combo commits the failure as if
+// it were a successful answer.
+export function extractFrameErrorText(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const direct = obj.error;
+  if (nonEmptyString(direct)) return direct;
+  if (direct && typeof direct === "object" && nonEmptyString(direct.message)) return direct.message;
+  if (obj.type === CLAUDE_EVENT.ERROR && nonEmptyString(obj.error?.message)) return obj.error.message;
+  if (obj.type === RESPONSES_EVENT.FAILED) {
+    const r = obj.response || {};
+    if (nonEmptyString(r.error?.message)) return r.error.message;
+    if (nonEmptyString(r.status_details?.error?.message)) return r.status_details.error.message;
+  }
+  return null;
+}
 
 // Anthropic Messages event.
 function inspectClaudeEvent(obj) {
@@ -112,26 +130,39 @@ function inspectResponsesEvent(obj) {
 // whether it carries content and/or a finish reason. Non-data lines and "[DONE]" carry nothing.
 export function inspectSSELine(line) {
   const parsed = parseSSELine(line.trimStart());
-  if (!parsed || parsed.done) return { content: false, finishReason: null };
+  if (!parsed || parsed.done) return { content: false, finishReason: null, errorText: null };
+  // An in-stream error frame is neither content nor a finish reason — it is the
+  // stream failing. Report it so the peek can refuse to commit this candidate.
+  // response.failed keeps its finish-reason classification and only gains the message.
+  const frameError = extractFrameErrorText(parsed);
+  if (frameError) {
+    if (parsed.type === RESPONSES_EVENT.FAILED) {
+      return { ...inspectResponsesEvent(parsed), errorText: frameError };
+    }
+    return { content: false, finishReason: null, errorText: frameError };
+  }
   if (typeof parsed.type === "string" && !Array.isArray(parsed.choices)) {
-    return parsed.type.startsWith(RESPONSES_EVENT_PREFIX) ? inspectResponsesEvent(parsed) : inspectClaudeEvent(parsed);
+    const info = parsed.type.startsWith(RESPONSES_EVENT_PREFIX) ? inspectResponsesEvent(parsed) : inspectClaudeEvent(parsed);
+    return { ...info, errorText: null };
   }
   let content = false, finishReason = null;
   for (const choice of parsed.choices || []) {
     if (deltaHasClientContent(choice.delta || choice.message || {})) content = true;
     if (choice.finish_reason) finishReason = choice.finish_reason;
   }
-  return { content, finishReason };
+  return { content, finishReason, errorText: null };
 }
 
 // Scan the COMPLETE lines of a decoded SSE buffer and update the running decision.
 // The trailing fragment (a line still being received) is not parsed — it is returned in
-// `state.pending` for the caller to prepend to the next chunk. `sawContent` latches true.
-export function scanSSEBuffer(text, state = { sawContent: false, finishReason: null }) {
+// `state.pending` for the caller to prepend to the next chunk. `sawContent` / `sawError`
+// latch true.
+export function scanSSEBuffer(text, state = { sawContent: false, sawError: false, errorText: null, finishReason: null }) {
   const lines = text.split("\n");
   state.pending = lines.pop();
   for (const line of lines) {
     const info = inspectSSELine(line);
+    if (info.errorText) { state.sawError = true; state.errorText = info.errorText; }
     if (info.content) state.sawContent = true;
     if (info.finishReason) state.finishReason = info.finishReason;
   }
@@ -155,7 +186,7 @@ export async function peekStreamForContent(body, { deadlineMs = EMPTY_PEEK_DEADL
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const headChunks = [];
-  const state = { sawContent: false, finishReason: null };
+  const state = { sawContent: false, sawError: false, errorText: null, finishReason: null };
   let textBuf = "";
 
   // Clamp: 0 / NaN / negative would otherwise disable the timeout and let a stalled-but-open
@@ -175,23 +206,26 @@ export async function peekStreamForContent(body, { deadlineMs = EMPTY_PEEK_DEADL
       // Upstream errored mid-peek. Body is locked to this reader; hand it back so the caller
       // can reconstruct (the replay will surface the same error). The failed read is consumed.
       pendingRead = null;
-      return settle({ outcome: state.sawContent ? "content" : "empty", timedOut: false, head: headChunks, reader, pendingRead: null, finishReason: state.finishReason, error: err });
+      return settle({ outcome: state.sawError ? "error" : (state.sawContent ? "content" : "empty"), timedOut: false, head: headChunks, reader, pendingRead: null, finishReason: state.finishReason, errorText: state.errorText, error: err });
     }
     if (res === "__deadline__") {
       // Fail-open: commit whatever we have. Hand the STILL-PENDING read to the caller so its
       // chunk is replayed, not dropped (fixes the content-dropping deadline race).
-      return settle({ outcome: "content", timedOut: true, head: headChunks, reader, pendingRead, finishReason: state.finishReason });
+      return settle({ outcome: state.sawError ? "error" : "content", timedOut: true, head: headChunks, reader, pendingRead, finishReason: state.finishReason, errorText: state.errorText });
     }
     const { done, value } = res;
     pendingRead = null;
     if (done) {
       if (textBuf) scanSSEBuffer(textBuf + "\n", state); // final line without a trailing newline
-      return settle({ outcome: state.sawContent ? "content" : "empty", timedOut: false, head: headChunks, reader, pendingRead: null, finishReason: state.finishReason });
+      return settle({ outcome: state.sawError ? "error" : (state.sawContent ? "content" : "empty"), timedOut: false, head: headChunks, reader, pendingRead: null, finishReason: state.finishReason, errorText: state.errorText });
     }
     headChunks.push(value);
     textBuf += decoder.decode(value, { stream: true });
     scanSSEBuffer(textBuf, state);
     textBuf = state.pending; // only the not-yet-complete line carries over
+    if (state.sawError) {
+      return settle({ outcome: "error", timedOut: false, head: headChunks, reader, pendingRead: null, finishReason: state.finishReason, errorText: state.errorText });
+    }
     if (state.sawContent) {
       return settle({ outcome: "content", timedOut: false, head: headChunks, reader, pendingRead: null, finishReason: state.finishReason });
     }

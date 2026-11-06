@@ -16,7 +16,7 @@ import {
 } from "./systemoneRouter.js";
 
 // Peek a 2xx combo response for real content. Returns null for non-SSE responses (leave
-// them untouched). For SSE, returns { outcome: "content"|"empty", finishReason, response }
+// them untouched). For SSE, returns { outcome: "content"|"empty"|"error", finishReason, errorText, response }
 // where `response` is a faithful replay of the original stream (head buffer + live reader).
 async function peekComboResponse(result, log) {
   const ct = (result.headers.get("content-type") || "").toLowerCase();
@@ -526,6 +526,19 @@ export async function handleComboChat({
         if (peeked.outcome === "content") {
           log.info("COMBO", `Model ${modelStr} succeeded${peeked.timedOut ? " (peek deadline; committed)" : ""}`);
           return peeked.response;
+        }
+
+        // Upstream delivered its failure inside a 200 stream (error event frame).
+        // Treat exactly like an empty generation: fall through to the next candidate.
+        if (peeked.outcome === "error") {
+          log.warn("COMBO", `Model ${modelStr} streamed an upstream error (${String(peeked.errorText || "").slice(0, 140)}) — falling through to next candidate`);
+          if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
+            clearStickyComboSession(comboName, sessionId);
+          }
+          peeked.response.body?.cancel?.().catch(() => {});
+          lastError = peeked.errorText || "upstream streamed an error";
+          if (!lastStatus) lastStatus = 502;
+          continue;
         }
 
         // Empty generation. Fall through to the next candidate unless this is a legitimately

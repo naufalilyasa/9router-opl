@@ -5,6 +5,7 @@ export const CLAUDE_EVENT = {
   CONTENT_BLOCK_START: "content_block_start",
   CONTENT_BLOCK_DELTA: "content_block_delta",
   MESSAGE_DELTA: "message_delta",
+  ERROR: "error",
 };
 
 // Anthropic content_block_delta delta types.

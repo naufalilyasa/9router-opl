@@ -92,6 +92,11 @@ export const ERROR_RULES = [
   { provider: "codebuddy-intl", text: "request illegal", cooldownMs: COOLDOWN.long },
 ];
 
+// Text fragments (from the rules above) that identify an upstream failure when it
+// appears inside a 200/SSE payload instead of a proper HTTP error status. Some
+// gateways (e.g. AgentRouter token rate limit) deliver errors this way.
+export const FALLBACK_TEXT_PATTERNS = ERROR_RULES.filter(r => r.text && !r.provider).map(r => r.text);
+
 // Backward compat: COOLDOWN_MS object (used by index.js re-export)
 export const COOLDOWN_MS = {
   unauthorized: COOLDOWN.long,

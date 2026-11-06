@@ -13,6 +13,7 @@ import { upstreamResponseHeaders } from "../utils/upstreamHeaders.js";
 import { HTTP_STATUS, TOKEN_SAVER_HEADER } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
 import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { markAccountUnavailable } from "@/sse/services/auth.js";
 import { getExecutor } from "../executors/index.js";
 import { supportsGrokCliReasoningEffort } from "../config/grokCli.js";
 import { buildRequestDetail, extractRequestConfig } from "./chatCore/requestDetail.js";
@@ -350,7 +351,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       trackPendingRequest(model, provider, connectionId, false);
       if (onDisconnect) onDisconnect(reason);
     },
-    onError: () => trackPendingRequest(model, provider, connectionId, false),
+    onError: (err) => {
+      trackPendingRequest(model, provider, connectionId, false);
+      // Mid-stream upstream failure after HTTP 200: the response is already
+      // committed, so no caller can rotate. Lock the connection briefly so the
+      // client's NEXT attempt skips this provider/model instead of re-hitting
+      // the same rate limit / dead stream. Client aborts (499) are not faults.
+      if (err && err.name !== "AbortError" && !signal?.aborted && connectionId && connectionId !== "noauth") {
+        markAccountUnavailable(connectionId, HTTP_STATUS.BAD_GATEWAY, err?.message || "upstream stream error", provider, model).catch(() => {});
+      }
+    },
     log, provider, model, reqTag,
     signal,
   });

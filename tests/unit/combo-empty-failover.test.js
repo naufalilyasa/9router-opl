@@ -221,6 +221,43 @@ describe("inspectSSELine — Anthropic Messages client format", () => {
   });
 });
 
+// Gateways that fail INSIDE a 200 stream (AgentRouter token rate limit delivers
+// data: {"error": "..."} instead of an HTTP status) must never be committed as a
+// successful answer: the peek reports outcome "error" and the combo falls through.
+describe("in-stream error frames", () => {
+  const ERR_STRING = `data: {"error":"Your requests to gpt-6.1-sol for gpt-6.1-sol in eastus2 have exceeded token rate limit."}\n\n`;
+  const ERR_OBJ = `data: {"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}\n\n`;
+
+  it("inspectSSELine: string error frame → errorText, not content", () => {
+    const r = inspectSSELine(ERR_STRING.trim());
+    expect(r.errorText).toContain("exceeded token rate limit");
+    expect(r.content).toBe(false);
+  });
+  it("inspectSSELine: object error frame → errorText from .error.message", () => {
+    expect(inspectSSELine(ERR_OBJ.trim()).errorText).toBe("rate limit exceeded");
+  });
+  it("inspectSSELine: Anthropic error event → errorText", () => {
+    const r = inspectSSELine(ev({ type: "error", error: { type: "api_error", message: "overloaded" } }));
+    expect(r.errorText).toBe("overloaded");
+    expect(r.content).toBe(false);
+  });
+  it("inspectSSELine: response.failed → errorText from response.error.message", () => {
+    expect(inspectSSELine(ev({ type: "response.failed", response: { error: { message: "boom" } } })).errorText).toBe("boom");
+  });
+  it("inspectSSELine: normal content frames carry no errorText", () => {
+    expect(inspectSSELine(CONTENT.trim()).errorText).toBe(null);
+  });
+  it("scanSSEBuffer latches sawError; ordinary frames keep it false", () => {
+    expect(scanSSEBuffer(ROLE + ERR_STRING + DONE).sawError).toBe(true);
+    expect(scanSSEBuffer(ROLE + CONTENT + DONE).sawError).toBe(false);
+  });
+  it("peekStreamForContent: error frame → outcome error with errorText", async () => {
+    const p = await peekStreamForContent(sseStream([ROLE, ERR_STRING, DONE]));
+    expect(p.outcome).toBe("error");
+    expect(p.errorText).toContain("exceeded token rate limit");
+  });
+});
+
 describe("inspectSSELine — OpenAI Responses client format", () => {
   const fc = { id: "fc_call_1", type: "function_call", arguments: "", call_id: "call_1", name: "f" };
   const ctc = { id: "ctc_call_2", type: "custom_tool_call", input: "", call_id: "call_2", name: "apply_patch" };
@@ -403,6 +440,13 @@ describe("combo fall-through per client format (real combo.js + streaming pipeli
       const { out, tried } = await combo([[CREATED, FILTERED], [CREATED, TEXT("from-m1"), COMPLETED]], RESP);
       expect(tried).toEqual(["openai/m0"]);
       expect(out).toContain('"reason":"content_filter"');
+    });
+    it("member streaming an in-stream error frame falls through to the next member", async () => {
+      const ERR = `data: {"error":"Your requests to gpt-6.1-sol for gpt-6.1-sol in eastus2 have exceeded token rate limit."}\n\n`;
+      const { out, tried } = await combo([[ROLE, ERR, DONE], [ROLE, C("from-m1"), STOP, DONE]]);
+      expect(tried).toEqual(["openai/m0", "openai/m1"]);
+      expect(out).toContain("from-m1");
+      expect(out).not.toContain("exceeded token rate limit");
     });
   });
 });
