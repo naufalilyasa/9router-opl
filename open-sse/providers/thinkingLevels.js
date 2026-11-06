@@ -51,6 +51,10 @@ const PATTERN_THINKING = [
   { provider: "openai-compatible-chat-freeai", pattern: "*muse-spark-1.3-contributor*", levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
   { provider: "openai-compatible-chat-freeai", pattern: "*deepseek-v4.1-flash-1017*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
   { provider: "openai-compatible-chat-freeai", pattern: "*", levels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
+  // AgentRouter relays OpenAI GPT models over the Responses API. Probed live by
+  // echoing the effort back: only high / xhigh / max survive; none / minimal /
+  // low / medium are all clamped to "max", and "none" cannot disable thinking.
+  { provider: "openai-compatible-chat-agentrouter", pattern: "*", levels: ["high", "xhigh", "max"] },
   { pattern: "*claude*4.6*", levels: CLAUDE_NO_XHIGH },
   { pattern: "*claude*4-6*", levels: CLAUDE_NO_XHIGH },
   { provider: "codex", pattern: "*gpt-6*", levels: CODEX_GPT_5_6_LEVELS },

@@ -524,6 +524,30 @@ PROVIDER_CAPABILITIES["openai-compatible-chat-freeai"] = {
   "prem/glm-5.3-flash": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 200000, maxOutput: 200000 },
 };
 
+// AgentRouter (https://agentrouter.org/v1) — relay over OpenAI GPT models.
+// Live-probed 2026-11-06. Only gpt-5.6-sol / gpt-6-astra / gpt-6.1-sol resolve a
+// channel; the docs also list claude-opus-5, claude-opus-4-8, glm-5.3 and
+// deepseek-v4-flash, but every one of those answers
+// "当前分组 default 下对于模型 X 无可用渠道" on this key, so they are not listed.
+//   • Endpoint: /v1/responses only. /v1/chat/completions is rejected upstream.
+//   • thinkingFormat is "openai-responses", NOT "openai": AgentRouter ignores a
+//     top-level reasoning_effort on the Responses endpoint entirely (probed —
+//     every level echoed back as "max"). Only the nested
+//     reasoning:{effort,summary} shape reaches the model.
+//   • Effort ladder, measured by what upstream echoes back: high / xhigh / max are
+//     honored; none / minimal / low / medium are all clamped to "max". Thinking is
+//     always on, so thinkingCanDisable is false.
+//   • max_output_tokens: 1000000 accepted (200 OK).
+//   • input: 880k tokens accepted; ~950k timed out at the gateway, so 900000 is
+//     published as the context window — verified, not assumed.
+//   • vision: input_image is accepted (200) but the reply text came back empty,
+//     so vision is left OFF rather than advertised on a 1-pixel test.
+PROVIDER_CAPABILITIES["openai-compatible-chat-agentrouter"] = {
+  "gpt-5.6-sol": { reasoning: true, thinkingFormat: "openai-responses", thinkingCanDisable: false, contextWindow: 900000, maxOutput: 1000000 },
+  "gpt-6-astra": { reasoning: true, thinkingFormat: "openai-responses", thinkingCanDisable: false, contextWindow: 900000, maxOutput: 1000000 },
+  "gpt-6.1-sol": { reasoning: true, thinkingFormat: "openai-responses", thinkingCanDisable: false, contextWindow: 900000, maxOutput: 1000000 },
+};
+
 /**
  * Pattern fallback — glob (* = wildcard), matched case-insensitively and
  * anchored (^...$) so a pattern must match the full model id. ORDER MATTERS:
