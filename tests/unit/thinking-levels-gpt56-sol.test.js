@@ -28,4 +28,8 @@ describe("getThinkingLevels", () => {
     const levels = getThinkingLevels("codex", "gpt-daybreak-blue-latest");
     expect(levels || []).not.toContain("max");
   });
+
+  it("returns high effort level for codebuddy-cn hy4", () => {
+    expect(getThinkingLevels("codebuddy-cn", "hy4")).toEqual(["high"]);
+  });
 });

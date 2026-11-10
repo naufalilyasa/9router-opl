@@ -244,6 +244,16 @@ describe("getCapabilitiesForModel — codebuddy-cn provider overrides", () => {
     expect(caps.thinkingCanDisable).toBe(false);
   });
 
+  it("hy4 via codebuddy-cn has correct capabilities (provider override)", () => {
+    const caps = getCapabilitiesForModel("codebuddy-cn", "hy4");
+    expect(caps.vision).toBe(true);
+    expect(caps.reasoning).toBe(true);
+    expect(caps.thinkingFormat).toBe("openai");
+    expect(caps.thinkingCanDisable).toBe(false);
+    expect(caps.contextWindow).toBe(1000000);
+    expect(caps.maxOutput).toBe(64000);
+  });
+
   it("unknown provider falls through to pattern matching", () => {
     const caps = getCapabilitiesForModel("unknown-provider", "mimo-v2.5");
     expect(caps.vision).toBe(true);
