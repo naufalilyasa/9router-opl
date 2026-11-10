@@ -110,6 +110,7 @@ const PATTERN_THINKING = [
   { provider: "codebuddy-cn", pattern: "kimi-k2.8-preview",  levels: ["low", "medium", "high"] },
   { provider: "codebuddy-cn", pattern: "hy3",          levels: ["low", "high"] },
   { provider: "codebuddy-cn", pattern: "hy4",          levels: ["high"] },
+  { provider: "codebuddy-cn", pattern: "hy4free",      levels: ["high"] },
   { provider: "codebuddy-cn", pattern: "hy4-preview",  levels: ["high"] },
   // codebuddy-intl — same catalog, same declared effort sets.
   { provider: "codebuddy-intl", pattern: "glm-5.3",      levels: ["low", "high", "max"] },

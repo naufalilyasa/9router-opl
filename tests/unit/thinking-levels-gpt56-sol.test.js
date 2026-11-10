@@ -32,4 +32,8 @@ describe("getThinkingLevels", () => {
   it("returns high effort level for codebuddy-cn hy4", () => {
     expect(getThinkingLevels("codebuddy-cn", "hy4")).toEqual(["high"]);
   });
+
+  it("returns high effort level for codebuddy-cn hy4free", () => {
+    expect(getThinkingLevels("codebuddy-cn", "hy4free")).toEqual(["high"]);
+  });
 });

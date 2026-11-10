@@ -66,6 +66,7 @@ export default {
     // "-x" suffix = paid tier of the same model (free id rides the promo quota).
     { id: "hy3", name: "Hy3" },
     { id: "hy4", name: "Hy4" },
+    { id: "hy4free", name: "Hy4-Free" },
     { id: "hy4-preview", name: "Hy4-Preview" },
     { id: "glm-5.3", name: "GLM-5.3" },
     { id: "glm-5.3-flash", name: "GLM-5.3-Flash" },
