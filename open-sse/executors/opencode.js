@@ -416,6 +416,7 @@ export class OpenCodeExecutor extends BaseExecutor {
         method: options.method,
         headers: options.headers,
         body: options.body,
+        proxyUrl: options.proxyUrl,
       }, { signal: options.signal }),
     });
   }
