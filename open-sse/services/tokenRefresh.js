@@ -227,6 +227,7 @@ export function formatProviderCredentials(provider, credentials, log) {
       };
 
     case "antigravity":
+    case "antigravity-special":
     case "gemini-cli":
       return {
         accessToken: credentials.accessToken,

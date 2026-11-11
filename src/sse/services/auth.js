@@ -80,7 +80,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     // Antigravity quota cache is lazy: only populated after that account returns 409/429.
-    const isAntigravity = providerId === "antigravity";
+    const isAntigravity = providerId === "antigravity" || providerId === "antigravity-special";
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
 
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
@@ -263,7 +263,8 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     shouldFallback = true;
     // Antigravity quota API provides exact per-model resetAt. Do not truncate it.
     // Other providers: honor exact resetsAt up to 6 hours.
-    cooldownMs = resolveProviderId(provider) === "antigravity"
+    const isAg = resolveProviderId(provider) === "antigravity" || resolveProviderId(provider) === "antigravity-special";
+    cooldownMs = isAg
       ? resetsAtMs - Date.now()
       : Math.min(resetsAtMs - Date.now(), 6 * 3600 * 1000);
     newBackoffLevel = 0;

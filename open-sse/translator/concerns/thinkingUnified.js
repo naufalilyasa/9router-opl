@@ -18,6 +18,7 @@ const FORMAT_TO_NATIVE = {
   "gemini-cli": "gemini-budget",
   vertex: "gemini-budget",
   antigravity: "gemini-budget",
+  "antigravity-special": "gemini-budget",
   kiro: "kiro",
   commandcode: "commandcode",
 };

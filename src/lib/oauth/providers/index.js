@@ -42,6 +42,7 @@ const PROVIDERS = {
   muse,
   "gemini-cli": geminiCli,
   antigravity,
+  "antigravity-special": antigravity,
   iflow,
   qoder,
   "qoder-cn": qoderCn,

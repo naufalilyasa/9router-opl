@@ -102,7 +102,7 @@ export default function ProviderDetailPage() {
   };
 
   const triggerOAuthConnection = () => {
-    if (providerId === "antigravity" && typeof window !== "undefined") {
+    if ((providerId === "antigravity" || providerId === "antigravity-special") && typeof window !== "undefined") {
       const confirmed = window.localStorage.getItem(AG_RISK_STORAGE_KEY) === "true";
       if (!confirmed) {
         setShowAgRiskModal(true);

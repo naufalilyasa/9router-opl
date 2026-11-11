@@ -111,8 +111,8 @@ function buildIdeRequestId({ body, request, credentials, model, requestType }) {
 }
 
 export class AntigravityExecutor extends BaseExecutor {
-  constructor() {
-    super("antigravity", PROVIDERS.antigravity);
+  constructor(providerId = "antigravity", config = null) {
+    super(providerId, config || PROVIDERS[providerId] || PROVIDERS.antigravity);
   }
 
   // Parse Antigravity quota error to extract precise resetsAtMs from ErrorInfo/RetryInfo

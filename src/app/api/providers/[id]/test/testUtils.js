@@ -238,7 +238,8 @@ function parseProviderErrorMessage(bodyText, fallback) {
 }
 
 async function probeCloudCodeAssistAccess(connection, accessToken, effectiveProxy = null) {
-  const userAgent = connection.provider === "antigravity"
+  const isAg = connection.provider === "antigravity" || connection.provider === "antigravity-special";
+  const userAgent = isAg
     ? (ANTIGRAVITY_CONFIG.loadCodeAssistUserAgent || "antigravity/hub/2.24.0 darwin/arm64")
     : "google-api-nodejs-client/9.15.1 gemini-cli/0.34.0";
 
@@ -268,7 +269,7 @@ async function refreshOAuthToken(connection) {
   if (!refreshToken) return null;
 
   try {
-    if (provider === "gemini-cli" || provider === "antigravity") {
+    if (provider === "gemini-cli" || provider === "antigravity" || provider === "antigravity-special") {
       const config = provider === "gemini-cli" ? GEMINI_CONFIG : ANTIGRAVITY_CONFIG;
       const response = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
@@ -398,7 +399,7 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
     return { valid: true, error: null, refreshed: false, newTokens: null };
   }
 
-  if (connection.provider === "gemini-cli" || connection.provider === "antigravity") {
+  if (connection.provider === "gemini-cli" || connection.provider === "antigravity" || connection.provider === "antigravity-special") {
     const initial = await probeCloudCodeAssistAccess(connection, accessToken, effectiveProxy);
     if (initial.valid) return { valid: true, error: null, refreshed, newTokens };
 

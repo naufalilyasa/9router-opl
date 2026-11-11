@@ -147,6 +147,7 @@ const OAUTH_PROVIDERS = {
   "gemini-cli": { id: "gemini-cli", alias: "gc", name: "Gemini CLI" },
   github: { id: "github", alias: "gh", name: "GitHub Copilot" },
   antigravity: { id: "antigravity", alias: "ag", name: "Antigravity" },
+  "antigravity-special": { id: "antigravity-special", alias: "ags", name: "Antigravity Special" },
   iflow: { id: "iflow", alias: "if", name: "iFlow AI" },
   qwen: { id: "qwen", alias: "qw", name: "Qwen Code" },
   kiro: { id: "kiro", alias: "kr", name: "Kiro AI" },
