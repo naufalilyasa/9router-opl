@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.js";
 import antigravityRegistry from "../../open-sse/providers/registry/antigravity.js";
-import { MODEL_PRICING } from "../../open-sse/providers/pricing.js";
+import { getPricingForModel } from "../../open-sse/providers/pricing.js";
 
 describe("Gemini 4 Argon Support & Config", () => {
   it("registers gemini-4-argon tiered models in antigravity provider registry", () => {
@@ -30,10 +30,12 @@ describe("Gemini 4 Argon Support & Config", () => {
     expect(caps.maxOutput).toBe(65536);
   });
 
-  it("defines pricing matching gemini-3.8-flash baseline", () => {
-    expect(MODEL_PRICING["gemini-4-argon"]).toBeDefined();
-    expect(MODEL_PRICING["gemini-4-argon-high"]).toBeDefined();
-    expect(MODEL_PRICING["gemini-4-argon-medium"]).toBeDefined();
-    expect(MODEL_PRICING["gemini-4-argon-low"]).toBeDefined();
+  it("resolves gemini-4 pricing from the gemini-4 pattern", () => {
+    // v0.5.119 (#4c7804ef) bills gemini-4 at its real rate (2.00/10.00);
+    // the explicit argon entries this test used to pin were that rate's predecessor.
+    const expected = { input: 2.00, output: 10.00, cached: 0.10, reasoning: 10.00, cache_creation: 0.1875 };
+    for (const id of ["gemini-4-argon", "gemini-4-argon-high", "gemini-4-argon-medium", "gemini-4-argon-low"]) {
+      expect(getPricingForModel("antigravity", id)).toEqual(expected);
+    }
   });
 });
