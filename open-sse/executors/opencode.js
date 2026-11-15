@@ -36,9 +36,10 @@ const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 // Free-lane load shedding: total attempts (first try + retries) and backoff.
 // Live bursts last ~20 s (a request that kept failing for 8 s succeeded at 19 s),
 // so the schedule below covers 800+1600+2400+3200+4000*3 = ~20 s.
-const OPENCODE_OVERLOAD_ATTEMPTS = 8;
-const OPENCODE_OVERLOAD_BASE_MS = 800;
-const OPENCODE_OVERLOAD_MAX_MS = 4000;
+// Shared with the OpenCode V2 executor: same free lane, same shedding behaviour.
+export const OPENCODE_OVERLOAD_ATTEMPTS = 8;
+export const OPENCODE_OVERLOAD_BASE_MS = 800;
+export const OPENCODE_OVERLOAD_MAX_MS = 4000;
 const OPENCODE_OVERLOAD_RE = /overloaded/i;
 
 /**
@@ -48,7 +49,7 @@ const OPENCODE_OVERLOAD_RE = /overloaded/i;
  *               session id itself is spent or flagged.
  * - null:       anything else.
  */
-async function classifyRejection(response) {
+export async function classifyRejection(response) {
   const status = response?.status;
   if (status !== 429 && status !== 403) return null;
   if (status === 403) return "session";
@@ -61,7 +62,7 @@ async function classifyRejection(response) {
   }
 }
 
-function sleep(ms, signal) {
+export function sleep(ms, signal) {
   return new Promise((resolve) => {
     if (signal?.aborted) return resolve();
     const onAbort = () => { clearTimeout(timer); resolve(); };

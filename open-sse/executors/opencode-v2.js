@@ -10,6 +10,14 @@ import { resolveSessionId } from "../utils/sessionManager.js";
 import { isMuseSparkModel } from "../providers/models/helpers.js";
 import { applyOpencodeV2Tools } from "../utils/opencodeV2Fingerprint.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
+import { opencodeTlsFetch } from "../services/opencodeTlsClient.js";
+import {
+  classifyRejection,
+  sleep,
+  OPENCODE_OVERLOAD_ATTEMPTS,
+  OPENCODE_OVERLOAD_BASE_MS,
+  OPENCODE_OVERLOAD_MAX_MS,
+} from "./opencode.js";
 import {
   findOpencodeBinary,
   formatOpencodeCliPrompt,
@@ -396,40 +404,82 @@ export class OpenCodeV2Executor extends BaseExecutor {
       }
     }
 
-    const wireRes = await super.execute({
+    const preparedCredentials = this.prepareRequestCredentials(args);
+    const directFetch = (url, options, proxyUrl) => opencodeTlsFetch(url, {
+      method: options.method,
+      headers: options.headers,
+      body: options.body,
+    }, {
+      signal: options.signal,
+      proxyUrl,
+      // wreq's timeout covers the entire response body (0 disables it); the base
+      // executor still bounds the header wait. Do not cap healthy streams (#5334).
+      timeoutMs: stream ? 0 : undefined,
+    });
+    // wreq-js tunnels the proxy itself; adapters that cannot must stay on undici.
+    directFetch.proxyCapable = true;
+
+    const run = () => super.execute({
       ...args,
       proxyOptions: effectiveProxyOptions,
-      credentials: this.prepareRequestCredentials(args),
+      credentials: preparedCredentials,
+      directFetch,
     });
 
-    // If HTTP wire returned 429 FreeUsageLimitError or 403 FreeTierError (e.g. cloud relay rejected),
-    // and host CLI is available, fall back to host CLI engine directly
-    if ((wireRes?.response?.status === 429 || wireRes?.response?.status === 403) && opencodeBin && promptText) {
+    // If the HTTP wire returns 429 FreeUsageLimitError or 403 FreeTierError
+    // (e.g. cloud relay rejected), and host CLI is available, fall back to the
+    // host CLI engine directly.
+    const cliOnGate = async (response) => {
+      if (!opencodeBin || !promptText) return null;
+      if (response?.status !== 429 && response?.status !== 403) return null;
       try {
-        const clone = wireRes.response.clone();
-        const text = await clone.text();
-        if (text.includes("FreeUsageLimitError") || text.includes("FreeTierError")) {
-          log?.info?.("OPENCODE-V2", "HTTP wire rejected by free-tier gate (429/403), falling back to host CLI engine");
-          const rawModel = baseModelId(model || body?.model);
-          const targetModel = `opencode/${rawModel}`;
-          return await executeOpencodeCli({
-            opencodeBin,
-            targetModel,
-            promptText,
-            body,
-            proxyOptions: effectiveProxyOptions,
-            signal,
-            log,
-            rawModel,
-            providerTag: "OPENCODE-V2",
-          });
-        }
+        const text = await response.clone().text();
+        if (!text.includes("FreeUsageLimitError") && !text.includes("FreeTierError")) return null;
+        log?.info?.("OPENCODE-V2", "HTTP wire rejected by free-tier gate (429/403), falling back to host CLI engine");
+        const rawModel = baseModelId(model || body?.model);
+        return await executeOpencodeCli({
+          opencodeBin,
+          targetModel: `opencode/${rawModel}`,
+          promptText,
+          body,
+          proxyOptions: effectiveProxyOptions,
+          signal,
+          log,
+          rawModel,
+          providerTag: "OPENCODE-V2",
+        });
       } catch {
-        /* fail open */
+        return null; // fail open
       }
-    }
+    };
 
-    return wireRes;
+    // The free lane sheds load with 429 "The inference service is overloaded"
+    // even after the request passes the TLS gate; the OpenCode CLI retries it.
+    // Inspect a clone (the body is a stream), retry transient overloads with
+    // backoff, and hand every other response back untouched.
+    for (let attempt = 1; ; attempt++) {
+      const result = await run();
+      const rejection = await classifyRejection(result?.response);
+      if (rejection === "session") {
+        const cliResult = await cliOnGate(result?.response);
+        if (cliResult) {
+          result.response.body?.cancel?.().catch?.(() => {});
+          return cliResult;
+        }
+        // The session id itself is spent or flagged: drop it so the next request
+        // mints a fresh one instead of failing the same way until restart.
+        rotateOpencodeV2Session(preparedCredentials);
+        return result;
+      }
+      if (rejection !== "overload" || attempt >= OPENCODE_OVERLOAD_ATTEMPTS || signal?.aborted) {
+        return result;
+      }
+      // Release the discarded 429 instead of leaving its stream half-read.
+      result.response.body?.cancel?.().catch?.(() => {});
+      log?.debug?.("RETRY", `OpenCode V2 free lane overloaded, retry ${attempt}/${OPENCODE_OVERLOAD_ATTEMPTS - 1}`);
+      await sleep(Math.min(OPENCODE_OVERLOAD_BASE_MS * attempt, OPENCODE_OVERLOAD_MAX_MS) + Math.random() * 250, signal);
+      if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+    }
   }
 
   buildUrl(model) {
