@@ -1,3 +1,11 @@
+# Unreleased
+
+## Fixes
+- **Antigravity**: align the impersonated client identity with the live IDE (2.33.0) and stop flattening the User-Agent in the MITM rewrite; streaming requests now send `Accept: text/event-stream`.
+- **Antigravity**: rewrite Hermes and OpenClaw prompt fingerprints that Antigravity reports as a bare `RESOURCE_EXHAUSTED` 429, classify that bare 429 as a request-scoped 400, and retry once with the system text moved into the first user turn.
+- **Antigravity**: rewrite Claude Code identity and stock system-prompt sentences that trigger the same fake 429.
+- **Anthropic**: strip Claude Code's `x-anthropic-billing-header` from OpenAI-format system text before caching, matching the Claude-format and Antigravity paths.
+
 # v0.5.119 (2026-11-11)
 
 ## Features
