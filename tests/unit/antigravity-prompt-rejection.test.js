@@ -8,7 +8,7 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: (...args) => fetchMock(...args),
 }));
 
-const { AntigravityExecutor, isAntigravityPromptRejection, ANTIGRAVITY_PROMPT_REJECTED_MESSAGE } = await import("../../open-sse/executors/antigravity.js");
+const { AntigravityExecutor, isAntigravityPromptRejection, moveSystemInstructionToContents, ANTIGRAVITY_PROMPT_REJECTED_MESSAGE } = await import("../../open-sse/executors/antigravity.js");
 const { parseUpstreamError } = await import("../../open-sse/utils/error.js");
 const { checkFallbackError } = await import("../../open-sse/services/accountFallback.js");
 
@@ -102,5 +102,57 @@ describe("Antigravity executor handling", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     // The retry hook already read the body; the error parser must still see it.
     expect(await parseUpstreamError(upstream, ag)).toMatchObject({ statusCode: 400, message: ANTIGRAVITY_PROMPT_REJECTED_MESSAGE });
+  });
+});
+
+
+describe("retry with the system prompt in the first user turn", () => {
+  const ag = new AntigravityExecutor();
+  const SYSTEM = "Follow the house rules.";
+  const sentBody = (call) => JSON.parse(fetchMock.mock.calls[call][1].body);
+  const run = () => ag.execute({
+    model: "gemini-3.8-flash-high",
+    body: {
+      model: "gemini-3.8-flash-high",
+      request: {
+        systemInstruction: { role: "user", parts: [{ text: SYSTEM }] },
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        generationConfig: {},
+      },
+    },
+    stream: false,
+    credentials: { accessToken: "t", projectId: "p", connectionId: "c" },
+  });
+  const ok = () => response(200, JSON.stringify({ response: { candidates: [{ content: { role: "model", parts: [{ text: "pong" }] }, finishReason: "STOP" }] } }));
+
+  it("moves the system text to the front of the first user turn and succeeds", async () => {
+    fetchMock.mockResolvedValueOnce(response(429, BARE)).mockResolvedValueOnce(ok());
+    const { response: upstream } = await run();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sentBody(0).request.systemInstruction.parts).toEqual([{ text: SYSTEM }]);
+    expect(sentBody(1).request.systemInstruction).toBeUndefined();
+    expect(sentBody(1).request.contents).toEqual([{ role: "user", parts: [{ text: SYSTEM }, { text: "hi" }] }]);
+    expect(upstream.status).toBe(200);
+  });
+
+  it("reports the request-scoped 400 when the moved prompt is refused too", async () => {
+    fetchMock.mockImplementation(async () => response(429, BARE));
+    const { response: upstream } = await run();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await parseUpstreamError(upstream, ag)).toMatchObject({ statusCode: 400, message: ANTIGRAVITY_PROMPT_REJECTED_MESSAGE });
+  });
+});
+
+describe("moveSystemInstructionToContents", () => {
+  it("returns null when there is no system text to move", () => {
+    expect(moveSystemInstructionToContents({ request: { contents: [] } })).toBeNull();
+  });
+
+  it("does not mutate the original envelope", () => {
+    const body = { request: { systemInstruction: { parts: [{ text: "rules" }] }, contents: [{ role: "user", parts: [{ text: "hi" }] }] } };
+    const moved = moveSystemInstructionToContents(body);
+    expect(body.request.systemInstruction).toEqual({ parts: [{ text: "rules" }] });
+    expect(moved.request.systemInstruction).toBeUndefined();
+    expect(moved.request.contents[0]).toEqual({ role: "user", parts: [{ text: "rules" }] });
   });
 });

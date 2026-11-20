@@ -5,6 +5,7 @@ import { OAUTH_ENDPOINTS, ANTIGRAVITY_HEADERS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX,
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { resolveSessionId, toNumericSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { GEMINI_ROLE } from "../translator/schema/index.js";
 import { cleanJSONSchemaForAntigravity, normalizeGeminiContents } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
 import { getGeminiThoughtSignatureSync } from "../services/thoughtSignatureStore.js";
@@ -39,8 +40,9 @@ const ANTIGRAVITY_TRANSIENT_ERROR_PATTERNS = [
 // so it is request-scoped: retrying, refreshing quota, or locking the account cannot help.
 const ANTIGRAVITY_BARE_EXHAUSTED_MESSAGE = /^Resource has been exhausted \(e\.g\. check quota\)\.?$/;
 export const ANTIGRAVITY_PROMPT_REJECTED_MESSAGE = "Antigravity rejected this request (upstream 429 RESOURCE_EXHAUSTED with no quota details, so this is not your quota). "
-  + "Antigravity refuses system prompts that carry certain third-party agent text; 9router rewrites the known strings "
-  + "(ANTIGRAVITY_PROMPT_REWRITES), so this prompt contains text it does not cover yet.";
+  + "Antigravity refuses system prompts that carry certain third-party agent text. 9router rewrites the known strings "
+  + "(ANTIGRAVITY_PROMPT_REWRITES) and retries a refused prompt once with the system text moved into the first user turn, "
+  + "but this request was still refused.";
 
 export function isAntigravityPromptRejection(status, bodyText) {
   if (status !== HTTP_STATUS.RATE_LIMITED || !bodyText) return false;
@@ -69,6 +71,16 @@ function readBodyOnce(response) {
     }
   }
   return response._bodyTextOnce;
+}
+
+// Antigravity fingerprints systemInstruction only: the same text sent in a user turn passes (probed
+// live). Returns a copy of the envelope with the system parts moved to the front of the first user
+// turn (normalizeGeminiContents merges the two), or null when there is no system text to move.
+export function moveSystemInstructionToContents(body) {
+  const { systemInstruction, ...request } = body?.request || {};
+  const parts = (systemInstruction?.parts || []).filter(p => typeof p?.text === "string" && p.text.trim());
+  if (parts.length === 0) return null;
+  return { ...body, request: { ...request, contents: [{ role: GEMINI_ROLE.USER, parts }, ...(request.contents || [])] } };
 }
 
 const ANTIGRAVITY_TRANSIENT_STATUSES = new Set([
@@ -152,6 +164,21 @@ function buildIdeRequestId({ body, request, credentials, model, requestType }) {
 export class AntigravityExecutor extends BaseExecutor {
   constructor(providerId = "antigravity", config = null) {
     super(providerId, config || PROVIDERS[providerId] || PROVIDERS.antigravity);
+  }
+
+  async execute(args) {
+    let result = await super.execute(args);
+    // A prompt rejection means systemInstruction carries text Google fingerprints that
+    // ANTIGRAVITY_PROMPT_REWRITES does not cover yet. Antigravity only checks systemInstruction,
+    // so retry once with that text moved into the first user turn.
+    if (result?.response?.status === HTTP_STATUS.RATE_LIMITED && !isImageModel(args.model)) {
+      const moved = moveSystemInstructionToContents(args.body);
+      if (moved && isAntigravityPromptRejection(result.response.status, await readBodyOnce(result.response))) {
+        args.log?.warn?.("ANTIGRAVITY", "System prompt rejected (fingerprinted third-party text not in ANTIGRAVITY_PROMPT_REWRITES); retrying with it in the first user turn");
+        result = await super.execute({ ...args, body: moved });
+      }
+    }
+    return result;
   }
 
   // Parse Antigravity quota error to extract precise resetsAtMs from ErrorInfo/RetryInfo
