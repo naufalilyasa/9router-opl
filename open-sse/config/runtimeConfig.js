@@ -132,6 +132,37 @@ export const DEFAULT_RETRY_CONFIG = {
   504: { attempts: 2, delayMs: 3000 }
 };
 
+// Free-tier upstreams rate-limit hard and answer 429/5xx until a slot frees up, so any
+// fixed attempt cap turns a waitable condition into a failed turn. Providers whose id
+// matches one of these prefixes retry until they succeed; the client abort signal still
+// ends the wait. Override with RETRY_UNLIMITED_PROVIDERS="prefixA,prefixB" ("" disables).
+export const UNLIMITED_RETRY_PROVIDERS = (process.env.RETRY_UNLIMITED_PROVIDERS ?? "openai-compatible-chat-freeai")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// attempts: -1 = retry forever
+export const UNLIMITED_RETRY_CONFIG = {
+  402: { attempts: -1, delayMs: 3000 },
+  429: { attempts: -1, delayMs: 3000 },
+  500: { attempts: -1, delayMs: 3000 },
+  502: { attempts: -1, delayMs: 3000 },
+  503: { attempts: -1, delayMs: 3000 },
+  504: { attempts: -1, delayMs: 3000 },
+};
+
+export function isUnlimitedRetryProvider(provider) {
+  if (typeof provider !== "string") return false;
+  return UNLIMITED_RETRY_PROVIDERS.some((p) => provider === p || provider.startsWith(`${p}-`));
+}
+
+// attempts < 0 = unlimited; 0 = never; n = at most n retries for this URL.
+export function shouldRetryAttempt(attempts, usedAttempts) {
+  if (attempts === 0) return false;
+  if (attempts < 0) return true;
+  return usedAttempts < attempts;
+}
+
 // Normalize a retry entry to { attempts, delayMs }
 export function resolveRetryEntry(entry) {
   if (entry == null) return { attempts: 0, delayMs: RETRY_CONFIG.delayMs };

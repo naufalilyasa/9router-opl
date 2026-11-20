@@ -1,4 +1,4 @@
-import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, UNLIMITED_RETRY_CONFIG, isUnlimitedRetryProvider, resolveRetryEntry, shouldRetryAttempt, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
@@ -110,14 +110,18 @@ export class BaseExecutor {
     const forceFreshSocketByUrl = {};
 
     // Merge default retry config with provider-specific config
-    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
+    const retryConfig = {
+      ...DEFAULT_RETRY_CONFIG,
+      ...this.config.retry,
+      ...(isUnlimitedRetryProvider(this.provider) ? UNLIMITED_RETRY_CONFIG : null),
+    };
 
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
     const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
       if (signal?.aborted) return false;
       const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
-      if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts) return false;
+      if (!shouldRetryAttempt(attempts, retryAttemptsByUrl[urlIndex])) return false;
       // Hook: subclass may derive delay from the response (headers/body). null → skip retry, use fallback.
       let waitMs = delayMs;
       if (response && this.computeRetryDelay) {
@@ -126,7 +130,7 @@ export class BaseExecutor {
         if (dynamic != null) waitMs = dynamic;
       }
       retryAttemptsByUrl[urlIndex]++;
-      log?.debug?.("RETRY", `${reason} retry ${retryAttemptsByUrl[urlIndex]}/${attempts} after ${waitMs / 1000}s`);
+      log?.debug?.("RETRY", `${reason} retry ${retryAttemptsByUrl[urlIndex]}/${attempts < 0 ? "∞" : attempts} after ${waitMs / 1000}s`);
 
       // Abort-aware backoff wait with clean listener removal on all termination paths
       await new Promise((resolve, reject) => {
