@@ -145,6 +145,10 @@ function resolveFormat(targetFormat, model, provider) {
   const providerFmt = provider ? PROVIDERS[provider]?.thinkingFormat : null;
   if (providerFmt) return providerFmt;
   const caps = getCapabilitiesForModel(provider, model);
+  if (targetFormat === "antigravity") {
+    if (caps.thinkingFormat === "claude-adaptive") return "gemini-level";
+    if (caps.thinkingFormat === "claude-budget") return "gemini-budget";
+  }
   const isOpenAIWire = targetFormat === "openai" || targetFormat === "openai-responses";
   if (caps.thinkingFormat && !(isOpenAIWire && NATIVE_ONLY_FORMATS.has(caps.thinkingFormat))) {
     return caps.thinkingFormat;
@@ -182,11 +186,13 @@ function normalizeOpenAILevel(level, supportedLevels) {
 }
 
 function toGeminiThinkingLevel(cfg, supportedLevels) {
-  const raw = cfg.mode === "auto" ? "high" : (toLevel(cfg) || "high");
+  const raw = (cfg.mode === "auto" ? "high" : (toLevel(cfg) || "high")).toLowerCase();
   const level = raw === "ultra" ? "max" : raw;
-  // Models that serve "xhigh" natively (Gemini 4 Hydrogen) keep it, and max caps there
-  // instead of collapsing to "high" like the rest of the gemini-level family.
-  if ((level === "xhigh" || level === "max") && supportedLevels?.includes("xhigh")) return "xhigh";
+  if (supportedLevels?.length) {
+    if (supportedLevels.includes(level)) return level;
+    if (level === "max" && supportedLevels.includes("xhigh")) return "xhigh";
+    if ((level === "max" || level === "xhigh") && supportedLevels.includes("high")) return "high";
+  }
   return effortToThinkingLevel(level);
 }
 
@@ -204,7 +210,6 @@ const GEMINI_LEVEL_OUTPUT_FLOOR = {
   low: 8192,
   medium: 16384,
   high: 65535,
-  xhigh: 65535,
 };
 
 function geminiBudgetOutputFloor(budget) {
