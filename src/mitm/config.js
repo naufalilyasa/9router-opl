@@ -56,6 +56,8 @@ const MODEL_SYNONYMS = {
     "gemini-4-argon-medium": "gemini-4-argon-medium",
     "gemini-4-argon-low": "gemini-4-argon-low",
     "gemini-default": "gemini-3.8-flash-medium",
+    // Hydrogen tiers keep their own slot; a bare id takes the model's default "high" tier.
+    "gemini-4-hydrogen": "gemini-4-hydrogen-high",
     "gemini-3.5-flash-high": "gemini-3.8-flash-high",
     "gemini-3.5-flash-medium": "gemini-3.8-flash-medium",
     "gemini-3.5-flash-low": "gemini-3.8-flash-low",

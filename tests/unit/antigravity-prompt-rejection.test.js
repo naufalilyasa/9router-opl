@@ -7,8 +7,9 @@ const fetchMock = vi.fn();
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: (...args) => fetchMock(...args),
 }));
-// The quota monitor shares proxyFetch; make its fail-open path resolve without
-// consuming the chat test's mocked responses.
+
+// Fork-only: the quota monitor shares proxyFetch. Make its fail-open path resolve
+// without consuming the chat test's mocked responses.
 vi.mock("../../open-sse/services/antigravityQuotaMonitor.js", () => ({
   isAntigravityQuotaDrained: async () => ({ isDrained: false, resetTime: null }),
 }));
@@ -110,29 +111,34 @@ describe("Antigravity executor handling", () => {
   });
 });
 
-
+// Google keeps adding fingerprints, so ANTIGRAVITY_PROMPT_REWRITES always trails it. Antigravity
+// only checks systemInstruction (the same text in a user turn passes, probed live), so a refused
+// prompt is retried once with its system text moved into the first user turn.
 describe("retry with the system prompt in the first user turn", () => {
   const ag = new AntigravityExecutor();
   const SYSTEM = "Follow the house rules.";
   const sentBody = (call) => JSON.parse(fetchMock.mock.calls[call][1].body);
-  const run = () => ag.execute({
-    model: "gemini-3.8-flash-high",
+  const run = (generationConfig = {}) => ag.execute({
+    model: "gemini-4-hydrogen",
     body: {
-      model: "gemini-3.8-flash-high",
+      model: "gemini-4-hydrogen-high",
       request: {
         systemInstruction: { role: "user", parts: [{ text: SYSTEM }] },
         contents: [{ role: "user", parts: [{ text: "hi" }] }],
-        generationConfig: {},
+        generationConfig,
       },
     },
     stream: false,
     credentials: { accessToken: "t", projectId: "p", connectionId: "c" },
   });
-  const ok = () => response(200, JSON.stringify({ response: { candidates: [{ content: { role: "model", parts: [{ text: "pong" }] }, finishReason: "STOP" }] } }));
+  const ok = (extra = {}) => response(200, JSON.stringify({ response: {
+    candidates: [{ content: { role: "model", parts: [{ text: "pong" }] }, finishReason: "STOP", ...extra }],
+  } }));
 
   it("moves the system text to the front of the first user turn and succeeds", async () => {
     fetchMock.mockResolvedValueOnce(response(429, BARE)).mockResolvedValueOnce(ok());
     const { response: upstream } = await run();
+
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(sentBody(0).request.systemInstruction.parts).toEqual([{ text: SYSTEM }]);
     expect(sentBody(1).request.systemInstruction).toBeUndefined();
@@ -140,24 +146,74 @@ describe("retry with the system prompt in the first user turn", () => {
     expect(upstream.status).toBe(200);
   });
 
-  it("reports the request-scoped 400 when the moved prompt is refused too", async () => {
-    fetchMock.mockImplementation(async () => response(429, BARE));
+  it.each([
+    ["Response", response],
+    ["DNS-bypass response", bypassResponse],
+  ])("reports the request-scoped 400 when the moved prompt is refused too (%s)", async (_label, make) => {
+    fetchMock.mockImplementation(async () => make(429, BARE));
     const { response: upstream } = await run();
+
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(await parseUpstreamError(upstream, ag)).toMatchObject({ statusCode: 400, message: ANTIGRAVITY_PROMPT_REJECTED_MESSAGE });
+  });
+
+  it("moves the prompt after a rejection on the DNS-bypass response shape", async () => {
+    fetchMock.mockResolvedValueOnce(bypassResponse(429, BARE)).mockResolvedValueOnce(ok());
+    const { response: upstream } = await run();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sentBody(1).request.systemInstruction).toBeUndefined();
+    expect(upstream.status).toBe(200);
+  });
+
+  it("does not move the prompt for a real quota error", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(REAL_QUOTA, { status: 429, headers: { "content-type": "application/json", "retry-after": "3600" } }));
+    const { response: upstream } = await run();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(upstream.status).toBe(429);
+  });
+
+  it("does not move the prompt for image generation (it never sends systemInstruction)", async () => {
+    fetchMock.mockImplementation(async () => response(429, BARE));
+    const { response: upstream } = await ag.execute({
+      model: "gemini-3.1-flash-image",
+      body: { model: "gemini-3.1-flash-image", request: { systemInstruction: { role: "user", parts: [{ text: SYSTEM }] }, contents: [{ role: "user", parts: [{ text: "a cat" }] }] } },
+      stream: false,
+      credentials: { accessToken: "t", projectId: "p", connectionId: "c" },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await parseUpstreamError(upstream, ag)).statusCode).toBe(400);
+  });
+
+  it("re-sends the moved prompt on long-decode continuation hops", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(429, BARE))
+      .mockResolvedValueOnce(ok({ finishReason: "CONTINUATION", continuationToken: "tok1" }))
+      .mockResolvedValueOnce(ok());
+    const { response: upstream } = await run({ maxOutputTokens: 262144 });
+    await upstream.text();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(sentBody(2).request.continuationToken).toBe("tok1");
+    expect(sentBody(2).request.systemInstruction).toBeUndefined();
+    expect(sentBody(2).request.contents[0].parts[0]).toEqual({ text: SYSTEM });
   });
 });
 
 describe("moveSystemInstructionToContents", () => {
   it("returns null when there is no system text to move", () => {
-    expect(moveSystemInstructionToContents({ request: { contents: [] } })).toBeNull();
+    const contents = [{ role: "user", parts: [{ text: "hi" }] }];
+    expect(moveSystemInstructionToContents({ request: { contents } })).toBeNull();
+    expect(moveSystemInstructionToContents({ request: { contents, systemInstruction: { role: "user", parts: [{ text: "  " }] } } })).toBeNull();
   });
 
   it("does not mutate the original envelope", () => {
-    const body = { request: { systemInstruction: { parts: [{ text: "rules" }] }, contents: [{ role: "user", parts: [{ text: "hi" }] }] } };
+    const body = { request: { systemInstruction: { role: "user", parts: [{ text: "rules" }] }, contents: [{ role: "user", parts: [{ text: "hi" }] }] } };
     const moved = moveSystemInstructionToContents(body);
-    expect(body.request.systemInstruction).toEqual({ parts: [{ text: "rules" }] });
-    expect(moved.request.systemInstruction).toBeUndefined();
+    expect(body.request.systemInstruction.parts).toEqual([{ text: "rules" }]);
+    expect(body.request.contents).toHaveLength(1);
     expect(moved.request.contents[0]).toEqual({ role: "user", parts: [{ text: "rules" }] });
   });
 });
