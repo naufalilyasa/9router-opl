@@ -17,6 +17,10 @@ const ICON_ALIASES = {
   "muse-web": "muse",
   "gemini-web": "gemini",
   "chatgpt-web": "openai",
+  // FreePI aliases ride the same brand mark
+  freepi: "freepi",
+  fp: "freepi",
+  "free-pi": "freepi",
 };
 
 // Runtime only — first 404 remembers id for the whole session

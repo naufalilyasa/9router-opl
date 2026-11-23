@@ -198,6 +198,15 @@ export const MODEL_PRICING = {
  * Keyed by provider alias (cc, cx, gc, gh, ...) or provider id (openai, anthropic, ...).
  */
 export const PROVIDER_PRICING = {
+  // FreePI free lane — these models are metered at $0 by the provider.
+  // Scoped per provider so a name collision with a paid MODEL_PRICING entry
+  // cannot leak a nonzero rate into the dashboard.
+  freepi: {
+    particle: ZERO_PRICING,
+    "deepseek-v4.1-flash": ZERO_PRICING,
+    "glm-5.3-flash": ZERO_PRICING,
+    "deepseek-v4-flash": ZERO_PRICING,
+  },
   // GitHub Copilot (gh) — explicit override, matches canonical gpt-5.3-codex rate
   gh: {
     "gpt-5.3-codex": { input: 1.75, output: 14.00, cached: 0.175, reasoning: 14.00, cache_creation: 1.75 },

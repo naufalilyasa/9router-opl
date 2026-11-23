@@ -572,6 +572,16 @@ PROVIDER_CAPABILITIES["openai-compatible-chat-agentrouter"] = {
   "gpt-6.1-sol": { reasoning: true, thinkingFormat: "openai-responses", thinkingCanDisable: false, contextWindow: 900000, maxOutput: 1000000 },
 };
 
+// FreePI native lane (direct api.freepi.ai). Limits are the values measured on
+// 2026-11-22 against the old bridge; the upstream hourly_ceiling is a runtime
+// quota, not a catalog limit, and is not encoded here. Free lane only.
+PROVIDER_CAPABILITIES["freepi"] = {
+  particle: { reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 32000 },
+  "hy4-flash": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 65536 },
+  "deepseek-v4.1-flash": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 393216 },
+  "glm-5.3-flash": { vision: true, videoInput: true, reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 131072 },
+};
+
 // gemini-web talks to gemini.google.com/_/BardChatUi — the web protocol carries
 // thinking as a BINARY flag (inner[80] = 1 normal | 2 extended), not a level.
 // The executor reads exactly `reasoning_effort` / `thinking.type` /

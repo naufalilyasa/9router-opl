@@ -151,6 +151,7 @@ import p154 from "./opencode-v2.js";
 import p155 from "./antigravity-special.js";
 import p156 from "./sensenova-intl.js";
 import p157 from "./synthetic.js";
+import p158 from "./freepi.js";
 export default [
   p0,
   p1,
@@ -302,4 +303,5 @@ export default [
   p155,
   p156,
   p157,
+  p158,
 ];

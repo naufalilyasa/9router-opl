@@ -57,4 +57,15 @@ export const FILTERS = {
       .sort((a, b) => String(a.id).localeCompare(String(b.id))),
 
   "nous-free": normalizeNousFreeModels,
+
+  // FreePI /client-version returns an array of model descriptors.
+  freepi: (models) =>
+    (Array.isArray(models) ? models : [])
+      .filter((m) => typeof m?.id === "string" && m.id.trim() !== "")
+      .map((m) => ({
+        id: m.id,
+        name: m.display_name || m.name || m.id,
+        isFree: Boolean(m.free),
+      }))
+      .sort((a, b) => Number(b.isFree) - Number(a.isFree) || String(a.id).localeCompare(String(b.id))),
 };

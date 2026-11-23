@@ -93,6 +93,10 @@ export const ERROR_RULES = [
   // hitting this rule. Matches codebuddy-intl 400 11128 WAF blocks.
   // ponytail: fixed 120s cooldown, upgrade to IP-scoped backoff if upstream block frequency spikes
   { provider: "codebuddy-intl", text: "request illegal", cooldownMs: COOLDOWN.long },
+  // FreePI informational errors — not a model/account failure. Locking the model
+  // here would needlessly pull the only FreePI connection out of rotation.
+  { provider: "freepi", text: "belongs to another free-pi account", cooldownMs: 0, lock: false },
+  { provider: "freepi", text: "model_requires_credits", cooldownMs: 0, lock: false },
 ];
 
 // Text fragments (from the rules above) that identify an upstream failure when it

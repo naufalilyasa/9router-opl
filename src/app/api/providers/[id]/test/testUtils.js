@@ -61,6 +61,13 @@ const OAUTH_TEST_CONFIG = {
     authPrefix: "Bearer ",
     refreshable: true,
   },
+  freepi: {
+    url: "https://api.freepi.ai/me/stats",
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    refreshable: false,
+  },
   github: {
     url: "https://api.github.com/user",
     method: "GET",

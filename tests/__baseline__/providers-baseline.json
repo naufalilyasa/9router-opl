@@ -158,6 +158,9 @@
     "quirks": {
       "clineEnvelope": true
     },
+    "usage": {
+      "url": "https://api.cline.bot/api/v1/users/me/plan/usage-limits"
+    },
     "auth": {
       "combined": true,
       "header": "Authorization",
@@ -734,6 +737,10 @@
   "nvidia": {
     "baseUrl": "https://integrate.api.nvidia.com/v1/chat/completions",
     "validateUrl": "https://integrate.api.nvidia.com/v1/models",
+    "timeoutMs": 90000,
+    "quirks": {
+      "dropClientMetadata": true
+    },
     "format": "openai"
   },
   "ollama-local": {
@@ -899,6 +906,9 @@
   "sensenova": {
     "baseUrl": "https://token.sensenova.cn/v1/chat/completions",
     "validateUrl": "https://token.sensenova.cn/v1/models",
+    "quirks": {
+      "reasoningAliasFields": true
+    },
     "format": "openai"
   },
   "together": {
@@ -1271,7 +1281,7 @@
   },
   "gemini-web": {
     "baseUrl": "https://gemini.google.com/app",
-    "format": "openai",
+    "format": "gemini-web",
     "authType": "cookie"
   },
   "muse-web": {
@@ -1312,6 +1322,35 @@
     },
     "format": "openai"
   },
+  "antigravity-special": {
+    "baseUrls": [
+      "https://daily-cloudcode-pa.googleapis.com"
+    ],
+    "format": "antigravity",
+    "headers": {
+      "User-Agent": "antigravity/hub/2.33.0 darwin/arm64"
+    },
+    "retry": {
+      "429": {
+        "attempts": 3
+      },
+      "500": {
+        "attempts": 3
+      },
+      "503": {
+        "attempts": 3
+      }
+    },
+    "usage": {
+      "quotaApiUrl": "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+      "quotaSummaryApiUrl": "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+      "loadProjectApiUrl": "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+      "tokenUrl": "https://oauth2.googleapis.com/token"
+    },
+    "clientId": "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+    "clientSecret": "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",
+    "tokenUrl": "https://oauth2.googleapis.com/token"
+  },
   "sensenova-intl": {
     "baseUrl": "https://token.sensenova.ai/v1/chat/completions",
     "validateUrl": "https://token.sensenova.ai/v1/models",
@@ -1322,6 +1361,21 @@
   },
   "synthetic": {
     "baseUrl": "https://api.synthetic.new/openai/v1/chat/completions",
+    "validateUrl": "https://api.synthetic.new/v2/quotas",
+    "usage": {
+      "url": "https://api.synthetic.new/v2/quotas"
+    },
     "format": "openai"
+  },
+  "freepi": {
+    "baseUrl": "https://api.freepi.ai/v1/chat/completions",
+    "validateUrl": "https://api.freepi.ai/me/stats",
+    "format": "openai",
+    "auth": {
+      "combined": true,
+      "header": "Authorization",
+      "scheme": "bearer"
+    },
+    "tokenUrl": "https://api.freepi.ai/auth/token"
   }
 }

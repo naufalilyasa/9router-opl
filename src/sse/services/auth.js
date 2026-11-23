@@ -4,7 +4,31 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as log from "../utils/logger.js";
+
+// FreePI keeps its token in the official CLI's credential file rather than in
+// this router's DB. A connection opts in with providerSpecificData.credentialFile
+// and credentialTokenPath. The token is injected into the selected credentials
+// object only — never persisted, echoed or logged. Falls back to the CLI's
+// default location when the marker is present but the path is omitted.
+const DEFAULT_FREEPI_CREDENTIAL_FILE = join(homedir(), ".free-pi", "agent", "credentials.json");
+
+function resolveCredentialFileToken(provider, psd = {}) {
+  if (resolveProviderId(provider) !== "freepi") return null;
+  if (psd.credentialFile === undefined && psd.credentialTokenPath === undefined) return null;
+  const file = psd.credentialFile || DEFAULT_FREEPI_CREDENTIAL_FILE;
+  const tokenPath = psd.credentialTokenPath || "token";
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    const token = tokenPath.split(".").reduce((acc, key) => (acc == null ? acc : acc[key]), parsed);
+    return typeof token === "string" && token.trim() ? token.trim() : null;
+  } catch {
+    return null;
+  }
+}
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
@@ -200,10 +224,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+    const fileToken = resolveCredentialFileToken(provider, connection.providerSpecificData || {});
 
     return {
       authType: connection.authType,
-      apiKey: connection.apiKey,
+      apiKey: fileToken || connection.apiKey,
       accessToken: connection.accessToken,
       refreshToken: connection.refreshToken,
       idToken: connection.idToken,
