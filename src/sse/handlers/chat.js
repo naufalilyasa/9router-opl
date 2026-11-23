@@ -24,7 +24,7 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import { resolveSessionIdentity } from "open-sse/utils/sessionManager.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
-import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { getProjectIdForConnection, invalidateProjectId } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
@@ -308,7 +308,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
-    if ((provider === "antigravity" || provider === "antigravity-special" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
+    const isLegacyFakePid = typeof refreshedCredentials.projectId === "string" &&
+      /^(useful|bright|swift|calm|bold)-(fuze|wave|spark|flow|core)-[a-f0-9]+$/i.test(refreshedCredentials.projectId);
+    if ((provider === "antigravity" || provider === "antigravity-special" || provider === "gemini-cli") && (!refreshedCredentials.projectId || isLegacyFakePid)) {
       const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken, provider);
       if (pid) {
         refreshedCredentials.projectId = pid;
@@ -408,6 +410,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const shouldFallback = isAgProvider && quotaResetMs
       ? true
       : (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs, result.scope)).shouldFallback;
+
+    if (isAgProvider && result.status === 403) {
+      invalidateProjectId(credentials.connectionId);
+    }
 
     if (shouldFallback) {
       log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} UNAVAILABLE (${result.status}) → NEXT ACCOUNT`);

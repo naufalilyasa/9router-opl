@@ -19,7 +19,8 @@ export default {
   category: "oauth",
   serviceKinds: ["llm", "image", "webSearch"],
   transport: {
-    baseUrls: [ANTIGRAVITY_IDE_BASE_URL],
+    // Daily host is primary; production host is the one-shot 403 fallback.
+    baseUrls: [ANTIGRAVITY_IDE_BASE_URL, "https://cloudcode-pa.googleapis.com"],
     format: "antigravity",
     headers: {
       "User-Agent": ANTIGRAVITY_IDE_USER_AGENT,

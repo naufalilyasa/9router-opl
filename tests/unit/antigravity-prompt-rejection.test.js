@@ -7,6 +7,11 @@ const fetchMock = vi.fn();
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: (...args) => fetchMock(...args),
 }));
+// The quota monitor shares proxyFetch; make its fail-open path resolve without
+// consuming the chat test's mocked responses.
+vi.mock("../../open-sse/services/antigravityQuotaMonitor.js", () => ({
+  isAntigravityQuotaDrained: async () => ({ isDrained: false, resetTime: null }),
+}));
 
 const { AntigravityExecutor, isAntigravityPromptRejection, moveSystemInstructionToContents, ANTIGRAVITY_PROMPT_REJECTED_MESSAGE } = await import("../../open-sse/executors/antigravity.js");
 const { parseUpstreamError } = await import("../../open-sse/utils/error.js");

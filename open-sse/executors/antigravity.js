@@ -9,6 +9,7 @@ import { GEMINI_ROLE } from "../translator/schema/index.js";
 import { cleanJSONSchemaForAntigravity, normalizeGeminiContents } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
 import { getGeminiThoughtSignatureSync } from "../services/thoughtSignatureStore.js";
+import { isAntigravityQuotaDrained } from "../services/antigravityQuotaMonitor.js";
 
 // Sanitize function name: Gemini requires [a-zA-Z_][a-zA-Z0-9_.:\-]{0,63}
 function sanitizeFunctionName(name) {
@@ -167,6 +168,39 @@ export class AntigravityExecutor extends BaseExecutor {
   }
 
   async execute(args) {
+    // Proactive quota pre-check — fail open on any error. This is a request-scoped
+    // skip signal, not an account lock; chat.js handles cooldown via the 409/429 path.
+    if (args.credentials?.accessToken) {
+      try {
+        const connectionId = args.credentials?.connectionId || args.credentials?.email || "default";
+        const { isDrained, resetTime } = await isAntigravityQuotaDrained(
+          args.credentials.accessToken,
+          args.model,
+          args.proxyOptions,
+          connectionId
+        );
+        if (isDrained) {
+          const cooldownMs = resetTime ? Math.max(30000, new Date(resetTime).getTime() - Date.now()) : 120000;
+          const body = JSON.stringify({
+            error: {
+              message: `Google Antigravity quota depleted for model ${args.model} (remaining <= 2%). Skipping connection proactively.`,
+              code: "QUOTA_EXHAUSTED",
+              type: "rate_limit_error",
+            },
+          });
+          return {
+            response: new Response(body, {
+              status: 429,
+              headers: { "Content-Type": "application/json", "Retry-After": String(Math.ceil(cooldownMs / 1000)) },
+            }),
+            url: this.buildUrl(args.model, args.stream, 0),
+            headers: {},
+            transformedBody: args.body,
+          };
+        }
+      } catch { /* fail open */ }
+    }
+
     let result = await super.execute(args);
     // A prompt rejection means systemInstruction carries text Google fingerprints that
     // ANTIGRAVITY_PROMPT_REWRITES does not cover yet. Antigravity only checks systemInstruction,
@@ -181,8 +215,47 @@ export class AntigravityExecutor extends BaseExecutor {
     return result;
   }
 
+  // 403 on daily/staging falls back once to production. 429 keeps its in-place
+  // retries (retryConfig) but never crosses to prod — that host is deliberately
+  // avoided for chat traffic because it is rate-limited.
+  shouldRetry(status, urlIndex) {
+    if (status === HTTP_STATUS.FORBIDDEN && urlIndex === 0 && urlIndex + 1 < this.getFallbackCount()) return true;
+    return false;
+  }
+
   // Parse Antigravity quota error to extract precise resetsAtMs from ErrorInfo/RetryInfo
   parseError(response, bodyText) {
+    if (response.status === HTTP_STATUS.FORBIDDEN && bodyText) {
+      if (/TOS_VIOLATION|Terms of Service|disabled in this account/i.test(bodyText)) {
+        return {
+          status: 403,
+          message: "Google account suspended for Terms of Service violation. Submit an appeal at https://forms.gle/hGzM9MEUv2azZsrb9 or connect a different account.",
+          code: "TOS_VIOLATION",
+        };
+      }
+      if (/RESOURCE_EXHAUSTED|quota|rate\s*limit|exceeded/i.test(bodyText)) {
+        return {
+          status: 403,
+          message: "Google Antigravity quota exceeded for this account. Cooling down.",
+          code: "QUOTA_EXHAUSTED",
+          resetsAtMs: Date.now() + 120000,
+        };
+      }
+      if (bodyText.includes("UberProxy") || bodyText.includes("&Uuml;berProxy") || bodyText.includes("berProxy: Error 403")) {
+        return {
+          status: 403,
+          message: "Google edge blocked this account/IP (UberProxy 403). Wait, switch egress IP/proxy, or re-auth the account.",
+          code: "UPSTREAM_BLOCKED",
+        };
+      }
+      if (/permission|caller does not have permission|not found|unsupported_client/i.test(bodyText)) {
+        return {
+          status: 403,
+          message: "Google Antigravity permission or project error (403). Project ID may need re-provisioning.",
+          code: "PERMISSION_DENIED",
+        };
+      }
+    }
     // Request-scoped (400): no account lock, no quota refresh, and combos move to their next model.
     if (isAntigravityPromptRejection(response.status, bodyText)) {
       return { status: HTTP_STATUS.BAD_REQUEST, message: ANTIGRAVITY_PROMPT_REJECTED_MESSAGE };
@@ -244,7 +317,9 @@ export class AntigravityExecutor extends BaseExecutor {
   }
 
   transformRequest(model, body, stream, credentials) {
-    const projectId = credentials?.projectId || this.generateProjectId();
+    const isLegacyFakePid = typeof credentials?.projectId === "string" &&
+      /^(useful|bright|swift|calm|bold)-(fuze|wave|spark|flow|core)-[a-f0-9]+$/i.test(credentials.projectId);
+    const projectId = (!isLegacyFakePid && credentials?.projectId) || this.generateProjectId(credentials);
 
     // OpenAI clients may include stream_options even for non-streaming calls.
     // Google generateContent rejects that combination before processing the request.
@@ -456,10 +531,10 @@ export class AntigravityExecutor extends BaseExecutor {
     }
   }
 
-  generateProjectId() {
-    const adj = ["useful", "bright", "swift", "calm", "bold"][Math.floor(Math.random() * 5)];
-    const noun = ["fuze", "wave", "spark", "flow", "core"][Math.floor(Math.random() * 5)];
-    return `${adj}-${noun}-${crypto.randomUUID().slice(0, 5)}`;
+  generateProjectId(credentials = null) {
+    const seed = credentials?.connectionId || credentials?.email || "default";
+    const hash = crypto.createHash("sha256").update(String(seed)).digest("hex").slice(0, 16);
+    return `cloudaicompanion-proj-${hash}`;
   }
 
   generateSessionId() {

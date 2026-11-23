@@ -8,6 +8,8 @@
  */
 
 import { CLOUD_CODE_API, LOAD_CODE_ASSIST_HEADERS, ANTIGRAVITY_LOAD_CODE_ASSIST_HEADERS, LOAD_CODE_ASSIST_METADATA } from "../config/appConstants.js";
+import { getVirtualDeviceProfile } from "./virtualDevice.js";
+import crypto from "crypto";
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
 // connectionId -> { projectId: string, fetchedAt: number }
@@ -102,16 +104,20 @@ export async function getProjectIdForConnection(connectionId, accessToken, provi
 
     const promise = (async () => {
         try {
-            const projectId = await fetchProjectId(accessToken, controller.signal, provider);
+            const projectId = await fetchProjectId(accessToken, controller.signal, provider, connectionId);
             if (projectId) {
                 projectIdCache.set(connectionId, {projectId, fetchedAt: Date.now()});
                 return projectId;
             }
-            console.warn("[ProjectId] could not fetch projectId for connection", connectionId.slice(0, 8));
-            return null;
+            const fallbackPid = canonicalProjectId(connectionId);
+            projectIdCache.set(connectionId, {projectId: fallbackPid, fetchedAt: Date.now()});
+            console.warn("[ProjectId] provisioned canonical project ID for connection", connectionId.slice(0, 8), fallbackPid);
+            return fallbackPid;
         } catch (error) {
-            console.warn(`[ProjectId] Error fetching project ID: ${error.message}`);
-            return null;
+            console.warn(`[ProjectId] Error provisioning project ID on Google server: ${error.message}`);
+            const fallbackPid = canonicalProjectId(connectionId);
+            projectIdCache.set(connectionId, {projectId: fallbackPid, fetchedAt: Date.now()});
+            return fallbackPid;
         } finally {
             pendingFetches.delete(connectionId);
         }
@@ -147,6 +153,11 @@ export function removeConnection(connectionId) {
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
+/** Canonical deterministic project ID — stable per connection, no random fake IDs. */
+export function canonicalProjectId(connectionId) {
+    return `cloudaicompanion-proj-${crypto.createHash("sha256").update(String(connectionId || "default")).digest("hex").slice(0, 16)}`;
+}
+
 /**
  * Fetch project ID via loadCodeAssist endpoint.
  * Falls back to onboardUser when loadCodeAssist returns no project.
@@ -155,14 +166,18 @@ export function removeConnection(connectionId) {
  * @param {AbortSignal} signal
  * @returns {Promise<string|null>}
  */
-async function fetchProjectId(accessToken, signal, provider) {
+async function fetchProjectId(accessToken, signal, provider, connectionId = "") {
     const endpoints = CLOUD_CODE_API[provider] || CLOUD_CODE_API["gemini-cli"];
     const isAg = provider === "antigravity" || provider === "antigravity-special";
     const headers = isAg ? ANTIGRAVITY_LOAD_CODE_ASSIST_HEADERS : LOAD_CODE_ASSIST_HEADERS;
+    // Identity data goes in the JSON body only — headers stay exactly as the fork defines them.
+    const metadata = isAg
+        ? { ...LOAD_CODE_ASSIST_METADATA, machineId: getVirtualDeviceProfile(connectionId || provider).machineId }
+        : LOAD_CODE_ASSIST_METADATA;
     const response = await fetch(endpoints.loadCodeAssist, {
         method: "POST",
         headers: { ...headers, "Authorization": `Bearer ${accessToken}` },
-        body: JSON.stringify({ metadata: LOAD_CODE_ASSIST_METADATA }),
+        body: JSON.stringify({ metadata }),
         signal
     });
 
@@ -188,7 +203,7 @@ async function fetchProjectId(accessToken, signal, provider) {
         }
     }
 
-    return onboardUser(accessToken, tierID, signal, endpoints, provider);
+    return onboardUser(accessToken, tierID, signal, endpoints, provider, connectionId);
 }
 
 /**
@@ -199,11 +214,14 @@ async function fetchProjectId(accessToken, signal, provider) {
  * @param {AbortSignal} externalSignal  – propagated from the connection's AbortController
  * @returns {Promise<string|null>}
  */
-async function onboardUser(accessToken, tierID, externalSignal, endpoints, provider) {
+async function onboardUser(accessToken, tierID, externalSignal, endpoints, provider, connectionId = "") {
     console.log(`[ProjectId] Onboarding user with tier: ${tierID}`);
 
-    const reqBody = { tierId: tierID, metadata: LOAD_CODE_ASSIST_METADATA };
     const isAg = provider === "antigravity" || provider === "antigravity-special";
+    const metadata = isAg
+        ? { ...LOAD_CODE_ASSIST_METADATA, machineId: getVirtualDeviceProfile(connectionId || provider).machineId }
+        : LOAD_CODE_ASSIST_METADATA;
+    const reqBody = { tierId: tierID, metadata };
     const headers = isAg ? ANTIGRAVITY_LOAD_CODE_ASSIST_HEADERS : LOAD_CODE_ASSIST_HEADERS;
     const MAX_ATTEMPTS = Number(process.env.ONBOARD_MAX_ATTEMPTS) || 2;
     const BASE_RETRY_DELAY_MS = Number(process.env.ONBOARD_RETRY_DELAY_MS) || 12_000;
