@@ -16,6 +16,21 @@ import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
 
 const MAX_TOOL_NAME_LEN = 128;
 
+// Some Responses upstreams (Xingchi) reject a request once its input contains
+// more than 10 user turns. Keep the newest turns so long agent sessions can
+// continue instead of failing with session_turn_limit_exceeded.
+function trimResponsesTurns(input, maxTurns) {
+  if (!Array.isArray(input) || !Number.isFinite(maxTurns) || maxTurns <= 0) return input;
+  const userIndexes = [];
+  input.forEach((item, index) => {
+    if (item?.role === ROLE.USER && (item.type === RESPONSES_ITEM.MESSAGE || item.type == null)) {
+      userIndexes.push(index);
+    }
+  });
+  if (userIndexes.length <= maxTurns) return input;
+  return input.slice(userIndexes[userIndexes.length - maxTurns]);
+}
+
 /**
  * Convert OpenAI Responses API request to OpenAI Chat Completions format
  */
@@ -319,6 +334,8 @@ function buildReasoningInputItem(msg) {
  * Convert OpenAI Chat Completions to OpenAI Responses API format
  */
 export function openaiToOpenAIResponsesRequest(model, body, stream, credentials) {
+  const maxTurns = Number(credentials?.providerSpecificData?.maxResponsesTurns) || 0;
+
   // Body already in Responses API format (e.g. Cursor CLI calling /chat/completions with input[])
   if (body.input) {
     const out = { ...body, model, stream: true };
@@ -328,6 +345,7 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
     }
     delete out.max_tokens;
     delete out.max_completion_tokens;
+    out.input = trimResponsesTurns(out.input, maxTurns);
     return out;
   }
 
@@ -459,6 +477,7 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   if (body.service_tier !== undefined) result.service_tier = body.service_tier;
   if (body.prompt_cache_key !== undefined) result.prompt_cache_key = body.prompt_cache_key;
 
+  result.input = trimResponsesTurns(result.input, maxTurns);
   return result;
 }
 
