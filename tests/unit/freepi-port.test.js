@@ -9,7 +9,7 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: (...args) => fetchMock(...args),
 }));
 
-import { FreePiExecutor, launchSessionHandshake, acquireFreePiQueueLock } from "../../open-sse/executors/freepi.js";
+import { FreePiExecutor, launchSessionHandshake, acquireFreePiQueueLock, syncMinClientVersion } from "../../open-sse/executors/freepi.js";
 import { PROVIDERS } from "../../open-sse/config/providers.js";
 import { PROVIDER_MODELS } from "../../open-sse/config/providerModels.js";
 import REGISTRY from "../../open-sse/providers/registry/index.js";
@@ -32,7 +32,7 @@ describe("FreePI native port", () => {
 
   it("adds client fingerprint headers with configurable CLI version", () => {
     const headers = new FreePiExecutor().buildHeaders({ apiKey: "fake-token" });
-    expect(headers["x-client-version"]).toBe(process.env.FREEPI_CLI_VERSION || "0.6.26");
+    expect(headers["x-client-version"]).toBe(process.env.FREEPI_CLI_VERSION || "0.6.28");
     expect(headers["x-session-id"]).toBeTruthy();
     expect(headers["x-turn-id"]).toBeTruthy();
     expect(headers["x-ad-context"]).toBe("none");
@@ -55,5 +55,18 @@ describe("FreePI native port", () => {
     await release1();
     await p2;
     expect(order).toEqual(["req1", "req2"]);
+  });
+
+  it("raises the client version to the upstream minimum on 426", async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ min: "0.7.0", latest: "0.7.0" }),
+    });
+    expect(await syncMinClientVersion()).toBe(true);
+    const headers = new FreePiExecutor().buildHeaders({ apiKey: "fake-token" });
+    expect(headers["x-client-version"]).toBe("0.7.0");
+    // Idempotent: already at the minimum, nothing to change.
+    expect(await syncMinClientVersion()).toBe(false);
   });
 });

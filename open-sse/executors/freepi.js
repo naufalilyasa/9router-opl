@@ -12,7 +12,9 @@ import { DefaultExecutor } from "./default.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
 // Config-driven via env so the CLI fingerprint can be aligned without a rebuild.
-const CLI_VERSION = process.env.FREEPI_CLI_VERSION || "0.6.26";
+// Upstream rejects anything below /client-version's `min` with 426 upgrade_required
+// (0.6.28 as of 2026-11-27). `let` because a 426 self-heals this at runtime.
+let CLI_VERSION = process.env.FREEPI_CLI_VERSION || "0.6.28";
 const ADS_INTERVAL_MS = 60 * 1000;
 const LAUNCH_HANDSHAKE_TTL_MS = 55 * 60 * 1000; // official FreePI CLI launch grace is 60m
 const SETTLING_DELAY_MS = 500;
@@ -234,6 +236,36 @@ export async function acquireFreePiQueueLock(token, signal) {
   });
 }
 
+/**
+ * Upstream answers 426 upgrade_required when x-client-version < /client-version's
+ * `min`. Adopt that minimum once at runtime so a version bump upstream does not
+ * require a rebuild of the CLI bundle.
+ */
+export async function syncMinClientVersion(log) {
+  try {
+    const res = await proxyAwareFetch(`${API_BASE}/client-version`, {
+      method: "GET",
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return false;
+    const info = await res.json();
+    const min = typeof info?.min === "string" ? info.min.trim() : "";
+    if (!/^\d+\.\d+\.\d+$/.test(min)) return false;
+    const cmp = (a, b) => {
+      const pa = a.split(".").map(Number);
+      const pb = b.split(".").map(Number);
+      for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+      return 0;
+    };
+    if (cmp(min, CLI_VERSION) <= 0) return false;
+    CLI_VERSION = min;
+    log?.info?.("FREEPI", `client version raised to upstream minimum ${min}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Hold the queue lock for the whole SSE stream lifecycle. */
 function wrapStreamWithQueueLock(response, releaseLock) {
   if (!response?.body || typeof response.body.pipeThrough !== "function") {
@@ -318,6 +350,7 @@ export class FreePiExecutor extends DefaultExecutor {
     }
 
     let result;
+    let versionRetried = false;
     try {
       result = await super.execute(params);
       // retry concurrent lock (429) up to 2 times
@@ -333,6 +366,15 @@ export class FreePiExecutor extends DefaultExecutor {
               if (result?.response?.ok || result?.response?.status !== 429) break;
             } else break;
           } catch { break; }
+        }
+      }
+      // 426 upgrade_required → adopt upstream's minimum version and retry once
+      if (result?.response?.status === 426 && !versionRetried) {
+        versionRetried = true;
+        const bumped = await syncMinClientVersion(log);
+        if (bumped) {
+          log?.info?.("FREEPI", `client version below upstream minimum, retrying as ${CLI_VERSION}`);
+          result = await super.execute(params);
         }
       }
       // 403 ads_required → handshake then retry once
