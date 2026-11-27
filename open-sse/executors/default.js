@@ -10,6 +10,7 @@ import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
 import { wantsGeminiLongDecode, withGeminiLongDecode } from "../utils/geminiLongDecode.js";
+import { codeBuddyApiKeyHeaders } from "../config/codebuddyShared.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -49,12 +50,37 @@ const HEADER_HOOKS = {
   // from an official client" — the request never reaches the model.
   // The same request WITH these headers passes channel verification and gets
   // as far as the real rate limiter (429 / 6004).
-  codebuddyHeaders: (h) => {
+  codebuddyHeaders: (h, c, provider) => {
     const requestId = randomUUID();
     h["X-Request-ID"] = requestId;
-    h["X-Conversation-ID"] = randomUUID();
+    // intl derives a stable conversation id from the body in its own executor;
+    // a random id here would shadow that derivation and break turn retries.
+    if (provider !== "codebuddy-intl") h["X-Conversation-ID"] = randomUUID();
     h["X-Conversation-Request-ID"] = requestId;
     h["X-Conversation-Message-ID"] = requestId;
+    h["X-Root-Request-ID"] = requestId;
+
+    const apiKey = typeof c?.apiKey === "string" ? c.apiKey.trim() : "";
+    if (apiKey && !c?.accessToken) {
+      const intl = h["X-IDE-Type"] === "IDE" || String(h["User-Agent"] || "").includes("workbuddy-ai");
+      // applyAuth reads credentials.apiKey; trim it there too so Bearer and
+      // X-API-Key carry the exact same value.
+      c.apiKey = apiKey;
+      Object.assign(h, codeBuddyApiKeyHeaders(apiKey, intl));
+      delete h["X-Domain"];
+    } else if (typeof c?.accessToken === "string" && c.accessToken) {
+      delete h["X-API-Key"];
+      h["X-Domain"] = h["X-IDE-Type"] === "IDE" ? "www.codebuddy.ai" : "copilot.tencent.com";
+      // Key-based OAuth proxies identify the user/tenant inside the access token.
+      try {
+        const payload = JSON.parse(Buffer.from(c.accessToken.split(".")[1] || "", "base64url").toString("utf8"));
+        if (typeof payload?.sub === "string" && payload.sub.trim()) h["X-User-Id"] = payload.sub.trim();
+        if (typeof payload?.enterprise_id === "string" && payload.enterprise_id.trim()) {
+          h["X-Enterprise-Id"] = payload.enterprise_id.trim();
+          h["X-Tenant-Id"] = payload.enterprise_id.trim();
+        }
+      } catch {}
+    }
   },
   // Stable device_id from OAuth connection (CLIProxyAPI KimiTokenStorage.DeviceID)
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
@@ -220,7 +246,7 @@ export class DefaultExecutor extends BaseExecutor {
     const headers = { "Content-Type": "application/json", ...(rt ? rt.headers : this.config.headers) };
     const desc = rt?.auth || AUTH_DESCRIPTORS[this.provider] || this.resolveAuthDescriptor();
     // Hooks run BEFORE auth so dynamic overlays can't clobber the token.
-    for (const hook of desc.hooks || []) HEADER_HOOKS[hook]?.(headers, credentials);
+    for (const hook of desc.hooks || []) HEADER_HOOKS[hook]?.(headers, credentials, this.provider);
     applyAuth(headers, desc, credentials);
 
     // anthropic-compatible-* nodes serving a real Claude model sit in front of

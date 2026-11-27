@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DefaultExecutor } from "./default.js";
+import { normalizeCodeBuddyReasoning } from "../config/codebuddyShared.js";
 
 /**
  * CodeBuddyIntlExecutor — talks to https://www.codebuddy.ai/v2/chat/completions
@@ -151,6 +152,11 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
     const transformed = super.transformRequest(model, body, stream, credentials);
     transformed.stream = true;
 
+    if (transformed.max_completion_tokens !== undefined) {
+      if (transformed.max_tokens === undefined) transformed.max_tokens = transformed.max_completion_tokens;
+      delete transformed.max_completion_tokens;
+    }
+
     const eff = transformed.reasoning_effort;
     if (eff === "none" || eff === "off") {
       delete transformed.reasoning_effort;
@@ -163,10 +169,23 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
     // Neutralize only matching agent markers while preserving user system prompts.
     const NEUTRAL_PROMPT = "You are a helpful AI assistant that helps with software engineering tasks.";
     const AGENT_PATTERN = /you are claude code|claude.?code.+official.+cli|anthropic.+official.+cli|anxthxropic.+official.+cli|you are (?:cursor|windsurf|cline|aider|continue|copilot|cody)|you are an? (?:ai )?(?:coding |code )?agent|cc_entrypoint\s*=\s*(?:cli|vscode|jetbrains|gui)|claude.?code.+issues|give feedback.+claude.?code|you are .{0,30}(?:powerful )?ai agent|orchestration capabilities|OhMyOpenCode|<agent-identity>|<Role>|<Behavior_Instructions>/i;
+    const sanitizeText = (text) => {
+      if (!text || !AGENT_PATTERN.test(text)) return text;
+      let replacedIdentity = false;
+      const sanitized = text.split("\n").map((line) => {
+        if (!AGENT_PATTERN.test(line)) return line;
+        if (!replacedIdentity) {
+          replacedIdentity = true;
+          return NEUTRAL_PROMPT;
+        }
+        return line.replace(new RegExp(AGENT_PATTERN.source, "gi"), "");
+      });
+      return sanitized.join("\n").trim() || NEUTRAL_PROMPT;
+    };
 
     // CodeBuddy rejects plain OpenAI shape (11101 invalid request): needs a
     // leading system prompt + user content as typed blocks, not a bare string.
-    const source = Array.isArray(transformed.messages) ? transformed.messages : [];
+    const source = normalizeCodeBuddyReasoning(Array.isArray(transformed.messages) ? transformed.messages : []);
     const clientSystemPrompts = source
       .filter((m) => m && ["system", "developer"].includes(m.role))
       .map((m) => {
@@ -176,10 +195,7 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
             : Array.isArray(m.content)
               ? m.content.map((c) => c?.text || "").join("\n")
               : "";
-        if (text && AGENT_PATTERN.test(text)) {
-          return NEUTRAL_PROMPT;
-        }
-        return text;
+        return sanitizeText(text);
       })
       .filter(Boolean);
 

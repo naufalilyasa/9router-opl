@@ -1,4 +1,5 @@
 import { DefaultExecutor } from "./default.js";
+import { normalizeCodeBuddyReasoning } from "../config/codebuddyShared.js";
 
 /**
  * CodeBuddyExecutor — talks to https://copilot.tencent.com/v2/chat/completions
@@ -14,34 +15,62 @@ export class CodeBuddyExecutor extends DefaultExecutor {
     super("codebuddy-cn");
   }
 
+  // Keep the conversation id stable across turns when the caller supplies one.
+  buildHeaders(credentials, stream = true, url, model, body = null) {
+    const headers = super.buildHeaders(credentials, stream, url, model, body);
+    const hint = body?.session_id || body?.conversation_id || body?.prompt_cache_key || body?.metadata?.session_id;
+    if (typeof hint === "string" && hint.trim()) {
+      headers["X-Conversation-ID"] = hint.trim().slice(0, 128);
+    }
+    return headers;
+  }
+
   transformRequest(model, body, stream, credentials) {
     const transformed = super.transformRequest(model, body, stream, credentials);
     transformed.stream = true;
 
-    // Tencent's content filter flags CLI agent system prompts ("You are Claude
-    // Code, Anthropic's official CLI...") as prompt injection / sensitive content
-    // and rejects the whole request. Detect agent system prompts (length catch-all
-    // + identity-marker regex) and replace them with a neutral one, while leaving
-    // legitimate user system prompts untouched. content may be a string or typed
-    // blocks ([{type:"text",text}]) depending on the incoming client format, so
-    // flatten before matching and preserve the original shape on replacement.
+    if (transformed.max_completion_tokens !== undefined) {
+      if (transformed.max_tokens === undefined) transformed.max_tokens = transformed.max_completion_tokens;
+      delete transformed.max_completion_tokens;
+    }
+    if (Array.isArray(transformed.messages)) {
+      transformed.messages = normalizeCodeBuddyReasoning(transformed.messages).map((m) =>
+        m?.role === "developer" ? { ...m, role: "system" } : m
+      );
+    }
+
+    // Tencent's content filter flags CLI agent identity lines ("You are Claude
+    // Code, Anthropic's official CLI...") as prompt injection / sensitive content.
+    // Replace only those lines so appended AGENTS.md/user rules survive, even on
+    // long prompts; content may be a string or typed blocks, preserve its shape.
     const NEUTRAL_PROMPT = "You are a helpful AI assistant that helps with software engineering tasks.";
     const AGENT_PATTERN = /you are claude code|claude.?code.+official.+cli|anthropic.+official.+cli|anxthxropic.+official.+cli|you are (?:cursor|windsurf|cline|aider|continue|copilot|cody)|you are an? (?:ai )?(?:coding |code )?agent|cc_entrypoint\s*=\s*(?:cli|vscode|jetbrains|gui)|claude.?code.+issues|give feedback.+claude.?code|you are .{0,30}(?:powerful )?ai agent|orchestration capabilities|OhMyOpenCode|<agent-identity>|<Role>|<Behavior_Instructions>/i;
-    const flatten = (content) =>
-      typeof content === "string"
-        ? content
-        : Array.isArray(content)
-          ? content.map((b) => (b && typeof b.text === "string" ? b.text : "")).join("\n")
-          : "";
+    const sanitizeText = (text) => {
+      if (!text || !AGENT_PATTERN.test(text)) return text;
+      let replacedIdentity = false;
+      const sanitized = text.split("\n").map((line) => {
+        if (!AGENT_PATTERN.test(line)) return line;
+        if (!replacedIdentity) {
+          replacedIdentity = true;
+          return NEUTRAL_PROMPT;
+        }
+        return line.replace(new RegExp(AGENT_PATTERN.source, "gi"), "");
+      });
+      return sanitized.join("\n").trim() || NEUTRAL_PROMPT;
+    };
     if (Array.isArray(transformed.messages)) {
       transformed.messages = transformed.messages.map((message) => {
-        if (!message || message.role !== "system") return message;
-        const text = flatten(message.content);
-        if (!text) return message;
-        if (text.length > 2000 || AGENT_PATTERN.test(text)) {
-          return typeof message.content === "string"
-            ? { ...message, content: NEUTRAL_PROMPT }
-            : { ...message, content: [{ type: "text", text: NEUTRAL_PROMPT }] };
+        if (!message || !["system", "developer"].includes(message.role)) return message;
+        if (typeof message.content === "string") {
+          return { ...message, content: sanitizeText(message.content) };
+        }
+        if (Array.isArray(message.content)) {
+          return {
+            ...message,
+            content: message.content.map((block) =>
+              block && typeof block.text === "string" ? { ...block, text: sanitizeText(block.text) } : block
+            ),
+          };
         }
         return message;
       });

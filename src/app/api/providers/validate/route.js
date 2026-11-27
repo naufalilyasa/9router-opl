@@ -8,6 +8,7 @@ import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-t
 import { buildCommandCodeHeaders } from "open-sse/shared/commandCodeHeaders.js";
 import { resolveQoderCredentials, resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { probeBedrockCredentials } from "open-sse/executors/bedrock.js";
+import { codeBuddyApiKeyHeaders } from "open-sse/config/codebuddyShared.js";
 import {
   createNousApiKeyProbe,
   getNousApiKeyValidationError,
@@ -621,6 +622,43 @@ export async function POST(request) {
             error = "Invalid session cookie — re-paste __Secure-next-auth.session-token from perplexity.ai";
           } else {
             isValid = true;
+          }
+          break;
+        }
+
+        case "codebuddy-cn":
+        case "codebuddy-intl": {
+          const key = (apiKey || "").trim();
+          if (!key) {
+            isValid = false;
+            error = "Missing API key";
+            break;
+          }
+          const intl = provider === "codebuddy-intl";
+          const url = intl ? "https://www.codebuddy.ai/v3/config" : "https://copilot.tencent.com/v3/config";
+          const res = await fetch(url, {
+            method: "GET",
+            headers: {
+              ...codeBuddyApiKeyHeaders(key, intl),
+              Authorization: `Bearer ${key}`,
+              Accept: "application/json",
+            },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (res.status === 401 || res.status === 403) {
+            isValid = false;
+            error = "Invalid or expired API key";
+          } else if (res.ok) {
+            const json = await res.json().catch(() => null);
+            if (json && json.code !== undefined && json.code !== 0) {
+              isValid = false;
+              error = json.msg || `CodeBuddy error (${json.code})`;
+            } else {
+              isValid = true;
+            }
+          } else {
+            isValid = false;
+            error = `CodeBuddy API error (${res.status})`;
           }
           break;
         }

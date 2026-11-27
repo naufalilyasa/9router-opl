@@ -8,6 +8,7 @@ import { probeBedrockCredentials } from "open-sse/executors/bedrock.js";
 import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { CODEX_CLI_VERSION } from "open-sse/config/appConstants.js";
+import { codeBuddyApiKeyHeaders } from "open-sse/config/codebuddyShared.js";
 import { GROK_CLI_PAGER_USER_AGENT, GROK_CLI_VERSION } from "open-sse/config/grokCli.js";
 import {
   NOUS_CHAT_COMPLETIONS_URL,
@@ -963,6 +964,28 @@ case "llm7": {
             ? "Invalid API key"
             : `SenseNova API error (${res.status})`,
         };
+      }
+      case "codebuddy-cn":
+      case "codebuddy-intl": {
+        const key = (connection.apiKey || "").trim();
+        if (!key) return { valid: false, error: "Missing API key", refreshed: false };
+        const intl = connection.provider === "codebuddy-intl";
+        const url = intl ? "https://www.codebuddy.ai/v3/config" : "https://copilot.tencent.com/v3/config";
+        const res = await fetchWithConnectionProxy(url, {
+          method: "GET",
+          headers: {
+            ...codeBuddyApiKeyHeaders(key, intl),
+            Authorization: `Bearer ${key}`,
+            Accept: "application/json",
+          },
+        }, effectiveProxy);
+        if (res.status === 401 || res.status === 403) return { valid: false, error: "Invalid or expired API key", refreshed: false };
+        if (!res.ok) return { valid: false, error: `CodeBuddy API error (${res.status})`, refreshed: false };
+        const json = await res.json().catch(() => null);
+        if (json && json.code !== undefined && json.code !== 0) {
+          return { valid: false, error: json.msg || `CodeBuddy error (${json.code})`, refreshed: false };
+        }
+        return { valid: true, error: null, refreshed: false };
       }
       case "kimchi": {
         // Dual-auth: same validation endpoint as the OAuth flow — the token (API key
