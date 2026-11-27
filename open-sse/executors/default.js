@@ -11,6 +11,7 @@ import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
 import { wantsGeminiLongDecode, withGeminiLongDecode } from "../utils/geminiLongDecode.js";
 import { codeBuddyApiKeyHeaders } from "../config/codebuddyShared.js";
+import { refreshCodebuddyIntlToken, refreshCodebuddyToken } from "../services/tokenRefresh/providers.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -336,7 +337,11 @@ export class DefaultExecutor extends BaseExecutor {
       clinepass: () => this.refreshCline(credentials.refreshToken, proxyOptions),
       kimi: () => this.refreshKimi(credentials, proxyOptions),
       "kimi-coding": () => this.refreshKimi(credentials, proxyOptions),
-      kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions)
+      kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions),
+      // CodeBuddy rotates a 1-year access token off the stored refresh token; the
+      // 401 path needs this or a dead token can never be replaced.
+      "codebuddy-intl": () => refreshCodebuddyIntlToken(credentials.refreshToken, log),
+      "codebuddy-cn": () => refreshCodebuddyToken(credentials.refreshToken, log)
     };
 
     const refresher = refreshers[this.provider];
